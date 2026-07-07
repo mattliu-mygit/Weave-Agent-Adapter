@@ -15,7 +15,7 @@ class WireEvent:
     event: str             # hook_event_name
     session_id: str
     captured_at: float     # hook wall-clock (epoch s); authoritative span timing
-    payload: dict          # raw Claude Code hook stdin, unmodified
+    payload: dict          # raw harness hook stdin (per active profile), unmodified
     pid: int               # emitting hook pid (debug)
 ```
 
@@ -117,12 +117,12 @@ class WeaveCall:
     id: str                 # unique call id
     trace_id: str           # == session's trace_id
     parent_id: str | None    # parent call id (None only for root session)
-    op_name: str            # see [06]; e.g. "claude_code.tool.Bash"
+    op_name: str            # see [06]; e.g. "claude_weave.tool.Bash"
     started_at: float
     ended_at: float | None
     inputs: dict            # span-kind-specific (redacted)
     output: Any | None
-    attributes: dict        # namespaced claude_code.* metadata
+    attributes: dict        # namespaced claude_weave.* metadata
     exception: str | None   # set for ERROR tool calls
 ```
 
@@ -130,13 +130,13 @@ class WeaveCall:
 
 | Span (`op_name`) | Built from | Parent |
 |---|---|---|
-| `claude_code.session` | `Session` | — (root) |
-| `claude_code.turn` | `Turn` | session |
-| `claude_code.input` | `Turn.input_text` | turn |
-| `claude_code.tool.<name>` | `ToolCall` | turn |
-| `claude_code.permission` | `Permission` | tool |
-| `claude_code.steering` | `Steering` | turn |
-| `claude_code.stop` | `Turn` end | turn |
+| `claude_weave.session` | `Session` | — (root) |
+| `claude_weave.turn` | `Turn` | session |
+| `claude_weave.input` | `Turn.input_text` | turn |
+| `claude_weave.tool.<name>` | `ToolCall` | turn |
+| `claude_weave.permission` | `Permission` | tool |
+| `claude_weave.steering` | `Steering` | turn |
+| `claude_weave.stop` | `Turn` end | turn |
 
 ### Timing rule
 

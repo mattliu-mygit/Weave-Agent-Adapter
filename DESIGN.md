@@ -1,19 +1,19 @@
-# claude-weave: Weave tracing for Claude Code (sidecar-primary)
+# claude-weave: Weave tracing for agent harnesses (sidecar-primary)
 
 > Proposal — awaiting approval. No code beyond M0 capture.
 
 ## 1. Principles
 
 - **Normal Weave usage.** `weave.init()` once, warm client for the session → WAL, batching, retry, redaction, sampling all native.
-- **Non-intrusive.** Claude Code is never modified. Hooks are external one-line commands (plugin auto-registers; 0 authored lines). The sidecar is a separate process beside `claude`, not inside it.
+- **Non-intrusive.** The harness is never modified. Hooks are external one-line commands (plugin auto-registers; 0 authored lines). The sidecar is a separate process beside the harness, not inside it.
 - **Never block, never break.** Hooks do a µs local write and exit 0; all failure swallowed.
 - **Harness-agnostic.** The core runs on canonical events (session/turn/tool/permission); a declarative per-harness **profile** ([specs/02](specs/02-harness-profiles.md)) maps a harness's native events, payload fields, and hook registration. New harness = new profile, no code. Claude Code is the first profile; event names below reflect it.
 
 ## 2. Architecture
 
 ```
- claude (harness, untouched)
-   │  SessionStart hook ──▶ lazy-spawn / connect ──▶ sidecar (1 warm weave.init, per machine)
+ harness (untouched)
+   │  session-start hook ──▶ lazy-spawn / connect ──▶ sidecar (1 warm weave.init, per machine)
    │  every other hook  ──(1 JSON line, local socket)──▶  │  in-mem trace state
    └───────────────────────────────────────────────────  ▼
                                           Weave SDK (async/WAL/retry/redact) ──▶ Weave
@@ -21,13 +21,13 @@
 
 - **Hooks = dumb emitters.** Parse stdin → write one line to the sidecar socket → exit 0. No SDK, no init, no network. If the socket's missing, append to a spool and move on.
 - **Sidecar = the warm client.** `SessionStart` spawns it (detached) or connects if it exists. It calls `weave.init()` once and lives for the session, holding correlation state in memory and translating events into Weave calls. This is where Weave's built-ins actually work (they need a live process).
-- Why not init in the harness / the hook? We can't run inside `claude`'s interpreter, and a hook is a short-lived subprocess (init dies with it in ~2s). The sidecar is "init-at-startup" relocated to a process we control.
+- Why not init in the harness / the hook? We can't run inside the harness's own process, and a hook is a short-lived subprocess (init dies with it in ~2s). The sidecar is "init-at-startup" relocated to a process we control.
 
 ## 3. Non-intrusiveness (the constraint)
 
 | Surface | Footprint |
 |---|---|
-| Claude Code source | none |
+| Harness source | none |
 | Adopter code | none — plugin ships `hooks/hooks.json`; one static command per event |
 | Runtime footprint | one detached sidecar process (scale-to-zero on idle) + a socket/state dir under `~/.claude/claude-weave/` |
 
@@ -58,6 +58,8 @@ One trace per session (root call). Nesting via explicit `trace_id`/`parent_id` h
 | `PostToolUse` / `…Failure` | close permission `allow`; close tool ok/error |
 | `Stop` | emit `stop`; close `turn` |
 | `SessionEnd` | close `session`; flush |
+
+_Native event names above are the Claude Code profile ([profiles/claude-code.toml](profiles/claude-code.toml)); other harnesses map their own via [spec 02](specs/02-harness-profiles.md)._
 
 ## 6. Correlation (in-memory in sidecar)
 

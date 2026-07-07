@@ -1,6 +1,6 @@
 # claude-weave
 
-Trace [Claude Code](https://docs.claude.com/en/docs/claude-code) sessions to [Weights & Biases Weave](https://wandb.ai/site/weave) — as a nested trace you can inspect, filter, and analyze.
+Trace agent-harness sessions to [Weights & Biases Weave](https://wandb.ai/site/weave) — as a nested trace you can inspect, filter, and analyze. [Claude Code](https://docs.claude.com/en/docs/claude-code) is the first supported harness.
 
 > **Status:** early development. Design is settled; the `M0` capture hook is written (inspector + real-session confirmation still pending). Not yet installable.
 
@@ -23,10 +23,10 @@ Beyond the call tree, it records the human-in-the-loop signals: **approval**, **
 
 ## How it works
 
-Non-intrusive by design — Claude Code itself is never modified.
+Non-intrusive by design — the harness itself is never modified.
 
 - **Hooks** (external one-line commands, auto-registered by a plugin) emit each event to a local socket and exit immediately.
-- A **sidecar** — spawned on `SessionStart`, one warm process per machine — hosts a single `weave.init()` client and turns events into nested Weave calls. This is what makes Weave's async batching, retry, WAL, and redaction actually apply (they need a long-lived process).
+- A **sidecar** — spawned at session start, one warm process per machine — hosts a single `weave.init()` client and turns events into nested Weave calls. This is what makes Weave's async batching, retry, WAL, and redaction actually apply (they need a long-lived process).
 
 Adopters write **zero** lines of code: installing the plugin registers everything. A daemonless OTLP-direct mode is kept as a fallback.
 
