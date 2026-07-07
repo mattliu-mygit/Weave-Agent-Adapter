@@ -28,7 +28,7 @@ Unmapped native events are ignored (still captured in M0).
 
 Pulled from the raw payload via the profile's paths:
 
-`session_id`, `event_name`, `tool_name`, `tool_input`, `tool_output`, `tool_use_id`, `transcript`, `permission_mode`, `cwd`.
+`session_id`, `tool_name`, `tool_input`, `tool_output`, `tool_use_id`, `transcript`, `permission_mode`, `cwd`. (The event itself isn't a field — it arrives via the hook's `--event` arg.)
 
 ---
 
@@ -52,7 +52,6 @@ SessionEnd         = "session_end"
 
 [fields]                         # canonical -> dotted path in payload
 session_id  = "session_id"
-event_name  = "hook_event_name"
 tool_name   = "tool_name"
 tool_input  = "tool_input"
 tool_output = "tool_response"
@@ -63,7 +62,7 @@ cwd         = "cwd"
 
 [registration]                   # how the installer wires hooks for this harness
 kind    = "claude-code-settings" # target format
-command = "claude-weave hook --harness claude-code"
+command = "claude-weave hook --harness claude-code"  # installer appends --event <event>
 events  = ["SessionStart","UserPromptSubmit","PreToolUse","PostToolUse",
            "PostToolUseFailure","PermissionRequest","PermissionDenied","Stop","SessionEnd"]
 ```
@@ -73,9 +72,9 @@ events  = ["SessionStart","UserPromptSubmit","PreToolUse","PostToolUse",
 ## How it's used
 
 - **Active harness** chosen once in `config.toml` (`active_harness = "claude-code"`); profiles live in `profiles/<name>.toml`.
-- **Hook stays dumb** (spec 01): it sends the raw payload plus a `--harness <name>` tag. No normalization in the hook.
-- **Sidecar normalizes:** loads the profile, maps `event_name` → canonical event and resolves canonical fields via `[fields]` paths, producing the state transitions in spec 01. All harness-specific knowledge lives in the profile.
-- **Installer** reads `[registration]` to wire hooks in the harness's own format — so "setup" is: pick a profile → installer does the rest.
+- **Hook stays dumb** (spec 01): it forwards the raw payload; `--harness` and `--event` come from its launch args (from `[registration]`). No parsing in the hook.
+- **Sidecar normalizes:** maps the native event (from `--event`) → canonical via `[events]`, and resolves fields via `[fields]` paths, producing the state transitions in spec 01. All harness-specific knowledge lives in the profile.
+- **Installer** reads `[registration]` and emits, for each event in `events`, `<command> --event <event>` in the harness's own format — so "setup" is: pick a profile → installer does the rest.
 
 ## Open
 

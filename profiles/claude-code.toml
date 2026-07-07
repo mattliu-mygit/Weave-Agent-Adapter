@@ -18,7 +18,6 @@ SessionEnd         = "session_end"
 
 [fields]
 session_id      = "session_id"
-event_name      = "hook_event_name"
 tool_name       = "tool_name"
 tool_input      = "tool_input"
 tool_output     = "tool_response"
@@ -29,7 +28,7 @@ cwd             = "cwd"
 
 [registration]
 kind    = "claude-code-settings"
-command = "claude-weave hook --harness claude-code"
+command = "claude-weave hook --harness claude-code"  # installer appends --event <event>
 events  = [
   "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
   "PostToolUseFailure", "PermissionRequest", "PermissionDenied", "Stop", "SessionEnd",

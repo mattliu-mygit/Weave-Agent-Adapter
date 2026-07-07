@@ -19,12 +19,12 @@ The harness profile itself lives at [`../profiles/claude-code.toml`](../profiles
 
 ## Target production wiring (M5, once packaged — not yet available)
 
-After `pip install` + the plugin, no hand-editing is needed. The equivalent manual block would be a single static command per event (the dispatcher reads the event from the payload):
+After `pip install` + the plugin, no hand-editing is needed. The equivalent manual block is a single static command per event, with `--event` set per entry:
 
 ```json
 {
   "hooks": {
-    "PreToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "claude-weave hook --harness claude-code" }] }]
+    "PreToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "claude-weave hook --harness claude-code --event PreToolUse" }] }]
   }
 }
 ```

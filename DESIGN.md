@@ -1,6 +1,6 @@
-# claude-weave: Weave tracing for agent harnesses (sidecar-primary)
+# claude-weave: Weave tracing for agent harnesses
 
-> Proposal — awaiting approval. No code beyond M0 capture.
+> v1 design. Implemented so far: M0 capture (see §14).
 
 ## 1. Principles
 
@@ -19,8 +19,8 @@
                                           Weave SDK (async/WAL/retry/redact) ──▶ Weave
 ```
 
-- **Hooks = dumb emitters.** Parse stdin → write one line to the sidecar socket → exit 0. No SDK, no init, no network. If the socket's missing, append to a spool and move on.
-- **Sidecar = the warm client.** `SessionStart` spawns it (detached) or connects if it exists. It calls `weave.init()` once and lives for the session, holding correlation state in memory and translating events into Weave calls. This is where Weave's built-ins actually work (they need a live process).
+- **Hooks = dumb emitters.** Read stdin → forward the raw payload to the sidecar socket → exit 0. No parsing, no SDK, no init, no network. If the socket's missing, append to a spool and move on.
+- **Sidecar = the warm client.** `SessionStart` spawns it (detached) or connects if it exists. It calls `weave.init()` once and stays warm until idle — one per machine, multiplexing all sessions (§8) — holding correlation state in memory and translating events into Weave calls. This is where Weave's built-ins actually work (they need a live process).
 - Why not init in the harness / the hook? We can't run inside the harness's own process, and a hook is a short-lived subprocess (init dies with it in ~2s). The sidecar is "init-at-startup" relocated to a process we control.
 
 ## 3. Non-intrusiveness (the constraint)
@@ -93,7 +93,7 @@ Because the sidecar runs the SDK, we get for free: **WAL** (`WEAVE_ENABLE_WAL=tr
 
 ## 12. Integration (zero authored lines)
 
-One static command (`claude-weave hook`) per event; dispatcher branches on `hook_event_name`. Ladder: **plugin** (0 lines) → `claude-weave install` (1 command) → paste generated block (~9 entries). No all-events wildcard, so entries are generated per event.
+One static command per event — `claude-weave hook --harness <h> --event <e>` — where `--event` comes from the profile's `[registration]`; the sidecar maps the native event to a canonical action (spec 02). Ladder: **plugin** (0 lines) → `claude-weave install` (1 command) → paste generated block (~9 entries). No all-events wildcard, so entries are generated per event.
 
 ## 13. Non-goals (v1)
 

@@ -47,11 +47,6 @@ def _detect_event(payload: object, argv: list[str]) -> str:
     return os.environ.get("CLAUDE_HOOK_EVENT", "unknown")
 
 
-def _claude_env() -> dict:
-    # Only CLAUDE* vars — avoid slurping the user's whole environment.
-    return {k: v for k, v in os.environ.items() if k.upper().startswith("CLAUDE")}
-
-
 def _safe(s: str) -> str:
     return "".join(c if (c.isalnum() or c in "-_.") else "_" for c in s)[:120] or "x"
 
@@ -72,14 +67,11 @@ def main() -> int:
 
     record = {
         "captured_at": time.time(),
-        "captured_at_iso": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
         "event": event,
         "pid": os.getpid(),
-        "cwd": os.getcwd(),
         "argv": sys.argv[1:],
         "stdin_parsed": payload,                       # None if JSON parse failed
         "stdin_raw": raw if payload is None else None,  # kept only on parse failure
-        "claude_env": _claude_env(),
     }
 
     session_dir = os.path.join(CAPTURE_DIR, _safe(session_id))
