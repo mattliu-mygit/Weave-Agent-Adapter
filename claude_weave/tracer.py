@@ -1,0 +1,235 @@
+"""Event → span reducer (specs 01, 05, 06).
+
+Turns normalized hook events into a nested tree of `WeaveCall` start/end
+emissions on a `Sink`. Holds per-session state in memory; all harness-specific
+knowledge stays in the `Profile`.
+
+Timing: every emission's time comes from the event's `captured_at`.
+Correlation (spec 05): tool calls key off the profile's `tool_use_id` field
+when present, else fall back to the last still-running tool (LIFO). The
+transcript-based fallback is deferred until M0 confirms the payload schema.
+
+Provisional field names (confirmed/adjusted via M0, and only in the profile):
+`prompt`, `tool_output`, `tool_use_id`, `denial_reason`.
+"""
+from __future__ import annotations
+
+import uuid
+from typing import Optional
+
+from .model import (
+    Decision, DecisionSource, Permission, Session, SessionStatus, Steering,
+    SteeringKind, ToolCall, ToolStatus, Turn, TurnStatus, WeaveCall,
+)
+from .profile import Profile
+from .sink import Sink
+
+NS = "claude_weave"
+
+
+def _id() -> str:
+    return uuid.uuid4().hex
+
+
+class Tracer:
+    def __init__(self, profile: Profile, project: str, sink: Sink) -> None:
+        self.profile = profile
+        self.project = project
+        self.sink = sink
+        self.sessions: dict[str, Session] = {}
+
+    def handle(self, wire) -> None:
+        canonical = self.profile.canonical_event(wire.event)
+        if canonical is None:
+            return  # unmapped native event — ignore
+        fields = self.profile.extract(wire.payload)
+        sid = fields.get("session_id")
+        if not sid:
+            return
+        handler = getattr(self, f"_on_{canonical}", None)
+        if handler:
+            handler(sid, fields, wire.captured_at)
+
+    # ------- session -------
+
+    def _on_session_start(self, sid, f, at) -> None:
+        if sid in self.sessions:
+            return
+        s = Session(
+            session_id=sid, trace_id=_id(), root_call_id=_id(), project=self.project,
+            started_at=at, last_activity=at,
+            permission_mode=f.get("permission_mode"), cwd=f.get("cwd"),
+        )
+        self.sessions[sid] = s
+        self.sink.start(WeaveCall(
+            id=s.root_call_id, trace_id=s.trace_id, op_name=f"{NS}.session",
+            started_at=at, parent_id=None, inputs={"session_id": sid},
+            attributes={NS: {"kind": "session", "harness": self.profile.name,
+                             "permission_mode": s.permission_mode, "cwd": s.cwd}},
+        ))
+
+    def _on_session_end(self, sid, f, at) -> None:
+        s = self.sessions.pop(sid, None)
+        if not s:
+            return
+        self._close_turn(s, at)
+        s.status = SessionStatus.CLOSED
+        self.sink.end(WeaveCall(
+            id=s.root_call_id, trace_id=s.trace_id, op_name=f"{NS}.session",
+            started_at=s.started_at, ended_at=at,
+            output={"turn_count": s.turn_count, "status": s.status.value},
+        ))
+
+    # ------- turn -------
+
+    def _on_turn_start(self, sid, f, at) -> None:
+        s = self.sessions.get(sid)
+        if not s:
+            return
+        if s.current_turn and s.current_turn.open:
+            # a user message mid-turn is steering, not a new turn
+            self._emit_steering(s, at, SteeringKind.INTERJECTION, text=f.get("prompt"))
+            return
+        t = Turn(call_id=_id(), index=s.turn_count, started_at=at, input_text=f.get("prompt"))
+        s.current_turn = t
+        s.turn_count += 1
+        self.sink.start(WeaveCall(
+            id=t.call_id, trace_id=s.trace_id, op_name=f"{NS}.turn", started_at=at,
+            parent_id=s.root_call_id, attributes={NS: {"kind": "turn", "index": t.index}},
+        ))
+        self._instant(s, t.call_id, f"{NS}.input", at,
+                      inputs={"prompt": t.input_text}, attrs={"kind": "input"})
+
+    def _on_turn_end(self, sid, f, at) -> None:
+        s = self.sessions.get(sid)
+        if s:
+            self._close_turn(s, at)
+
+    def _close_turn(self, s: Session, at) -> None:
+        t = s.current_turn
+        if not t or not t.open:
+            return
+        self._instant(s, t.call_id, f"{NS}.stop", at, attrs={"kind": "stop"})
+        t.open = False
+        t.ended_at = at
+        t.status = TurnStatus.CLOSED
+        self.sink.end(WeaveCall(
+            id=t.call_id, trace_id=s.trace_id, op_name=f"{NS}.turn",
+            started_at=t.started_at, ended_at=at,
+            output={"status": t.status.value, "tool_count": len(t.tool_order),
+                    "had_steering": bool(t.steering)},
+        ))
+
+    # ------- tools -------
+
+    def _on_tool_pre(self, sid, f, at) -> None:
+        s = self.sessions.get(sid)
+        if not s or not s.current_turn:
+            return
+        t = s.current_turn
+        key = f.get("tool_use_id") or f"_synth:{f.get('tool_name')}:{len(t.tool_order)}"
+        tc = ToolCall(correlation_key=key, call_id=_id(),
+                      tool_name=f.get("tool_name", "tool"),
+                      tool_input=f.get("tool_input") or {}, started_at=at)
+        t.tool_calls[key] = tc
+        t.tool_order.append(key)
+        self.sink.start(WeaveCall(
+            id=tc.call_id, trace_id=s.trace_id, op_name=f"{NS}.tool.{tc.tool_name}",
+            started_at=at, parent_id=t.call_id,
+            inputs={"tool_name": tc.tool_name, "tool_input": tc.tool_input},
+            attributes={NS: {"kind": "tool", "tool_name": tc.tool_name,
+                             "harness": self.profile.name}},
+        ))
+
+    def _on_permission_request(self, sid, f, at) -> None:
+        s, tc = self._locate_tool(sid, f)
+        if not tc:
+            return
+        tc.permission = Permission(call_id=_id(), requested_at=at, decision=Decision.PENDING)
+        self.sink.start(WeaveCall(
+            id=tc.permission.call_id, trace_id=s.trace_id, op_name=f"{NS}.permission",
+            started_at=at, parent_id=tc.call_id, inputs={"tool_name": tc.tool_name},
+            attributes={NS: {"kind": "permission"}},
+        ))
+
+    def _on_permission_denied(self, sid, f, at) -> None:
+        s, tc = self._locate_tool(sid, f)
+        if not tc:
+            return
+        self._close_permission(s, tc, Decision.DENY, DecisionSource.USER, f.get("denial_reason"), at)
+        tc.status = ToolStatus.REJECTED
+        tc.ended_at = at
+        self.sink.end(WeaveCall(
+            id=tc.call_id, trace_id=s.trace_id, op_name=f"{NS}.tool.{tc.tool_name}",
+            started_at=tc.started_at, ended_at=at, output=None,
+            attributes={NS: {"status": tc.status.value, "permission_decision": "deny"}},
+        ))
+
+    def _on_tool_post(self, sid, f, at) -> None:
+        self._finish_tool(sid, f, at, ok=True)
+
+    def _on_tool_error(self, sid, f, at) -> None:
+        self._finish_tool(sid, f, at, ok=False)
+
+    def _finish_tool(self, sid, f, at, ok: bool) -> None:
+        s, tc = self._locate_tool(sid, f)
+        if not tc or tc.status != ToolStatus.RUNNING:
+            return
+        # approval is inferred: a tool that ran was allowed
+        if tc.permission and tc.permission.decision == Decision.PENDING:
+            self._close_permission(s, tc, Decision.ALLOW, DecisionSource.USER, None, at)
+        source = "user" if tc.permission else "auto"
+        tc.status = ToolStatus.OK if ok else ToolStatus.ERROR
+        tc.ended_at = at
+        tc.output = f.get("tool_output") if ok else None
+        tc.error = None if ok else (f.get("tool_output") or "error")
+        self.sink.end(WeaveCall(
+            id=tc.call_id, trace_id=s.trace_id, op_name=f"{NS}.tool.{tc.tool_name}",
+            started_at=tc.started_at, ended_at=at, output=tc.output, exception=tc.error,
+            attributes={NS: {"status": tc.status.value,
+                             "permission_decision": "allow", "permission_source": source}},
+        ))
+
+    # ------- helpers -------
+
+    def _locate_tool(self, sid, f):
+        s = self.sessions.get(sid)
+        if not s or not s.current_turn:
+            return s, None
+        t = s.current_turn
+        key = f.get("tool_use_id")
+        if key and key in t.tool_calls:
+            return s, t.tool_calls[key]
+        for k in reversed(t.tool_order):          # fallback: last still-running tool
+            if t.tool_calls[k].status == ToolStatus.RUNNING:
+                return s, t.tool_calls[k]
+        return s, None
+
+    def _close_permission(self, s, tc, decision, source, reason, at) -> None:
+        p = tc.permission
+        if not p:
+            return  # auto-approved: no permission span was opened
+        p.decision, p.source, p.reason, p.decided_at = decision, source, reason, at
+        self.sink.end(WeaveCall(
+            id=p.call_id, trace_id=s.trace_id, op_name=f"{NS}.permission",
+            started_at=p.requested_at or at, ended_at=at,
+            output={"reason": reason} if reason else None,
+            attributes={NS: {"decision": decision.value, "source": source.value}},
+        ))
+
+    def _emit_steering(self, s, at, kind, text=None) -> None:
+        t = s.current_turn
+        if not t:
+            return
+        t.steering.append(Steering(kind=kind, at=at, text=text))
+        self._instant(s, t.call_id, f"{NS}.steering", at,
+                      inputs={"text": text} if text else {},
+                      attrs={"kind": "steering", "steering_kind": kind.value})
+
+    def _instant(self, s, parent_id, op_name, at, inputs=None, attrs=None) -> None:
+        cid = _id()
+        self.sink.start(WeaveCall(id=cid, trace_id=s.trace_id, op_name=op_name, started_at=at,
+                                  parent_id=parent_id, inputs=inputs or {},
+                                  attributes={NS: attrs or {}}))
+        self.sink.end(WeaveCall(id=cid, trace_id=s.trace_id, op_name=op_name,
+                                started_at=at, ended_at=at))

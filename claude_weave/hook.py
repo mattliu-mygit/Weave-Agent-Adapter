@@ -24,11 +24,9 @@ STDIN_TIMEOUT_S = 0.5
 
 
 def _read_stdin() -> str:
-    """Read the full stdin payload without ever blocking indefinitely."""
     try:
         if sys.stdin is None or sys.stdin.closed:
             return ""
-        # If nothing is piped/ready within the timeout, don't block.
         ready, _, _ = select.select([sys.stdin], [], [], STDIN_TIMEOUT_S)
         if not ready:
             return ""
@@ -38,7 +36,6 @@ def _read_stdin() -> str:
 
 
 def _detect_event(payload: object, argv: list[str]) -> str:
-    """Prefer the payload's own field; fall back to --event, then env."""
     if isinstance(payload, dict) and payload.get("hook_event_name"):
         return str(payload["hook_event_name"])
     for i, a in enumerate(argv):
@@ -56,7 +53,7 @@ def main() -> int:
     try:
         payload: object = json.loads(raw) if raw.strip() else {}
     except Exception:
-        payload = None  # parse failed — keep the raw text below
+        payload = None
 
     event = _detect_event(payload, sys.argv[1:])
     session_id = (
@@ -70,8 +67,8 @@ def main() -> int:
         "event": event,
         "pid": os.getpid(),
         "argv": sys.argv[1:],
-        "stdin_parsed": payload,                       # None if JSON parse failed
-        "stdin_raw": raw if payload is None else None,  # kept only on parse failure
+        "stdin_parsed": payload,
+        "stdin_raw": raw if payload is None else None,
     }
 
     session_dir = os.path.join(CAPTURE_DIR, _safe(session_id))
