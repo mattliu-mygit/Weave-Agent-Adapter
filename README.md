@@ -28,7 +28,7 @@ Non-intrusive by design — the harness itself is never modified.
 - **Hooks** (external one-line commands, auto-registered by a plugin) emit each event to a local socket and exit immediately.
 - A **sidecar** — spawned at session start, one warm process per machine — hosts a single `weave.init()` client and turns events into nested Weave calls. This is what makes Weave's async batching, retry, WAL, and redaction actually apply (they need a long-lived process).
 
-Adopters write **zero** lines of code: installing the plugin registers everything. A daemonless OTLP-direct mode is kept as a fallback.
+Adopters write **zero** lines of code: installing the plugin registers everything.
 
 See [DESIGN.md](DESIGN.md) for the full design, [specs/](specs/) for detailed specs, and [examples/](examples/) for copy-pasteable config.
 
@@ -38,7 +38,7 @@ See [DESIGN.md](DESIGN.md) for the full design, [specs/](specs/) for detailed sp
 - [ ] **M1** — sidecar + core trace tree (session / turn / tool)
 - [ ] **M2** — permission / approval / rejection / steering
 - [ ] **M3** — redaction, sampling, WAL, config
-- [ ] **M4** — crash reconciliation, subagents, OTLP fallback
+- [ ] **M4** — subagents, compaction, hardening
 - [ ] **M5** — plugin + pip packaging
 
 ## License

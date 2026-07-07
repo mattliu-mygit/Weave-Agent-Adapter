@@ -1,6 +1,6 @@
-# Spec 07 — What we send to Weave
+# Spec 06 — What we send to Weave
 
-Each span (spec 01, layer C) becomes **two requests**: a `call_start` at open and a `call_end` at close. In the sidecar these go through the SDK (`create_call` / `finish_call`); the OTLP fallback sends the equivalent OTEL span. All `inputs`/`output` pass through redaction (spec 08) first.
+Each span (spec 01, layer C) becomes **two requests**: a `call_start` at open and a `call_end` at close, both through the SDK (`create_call` / `finish_call`) in the sidecar. All `inputs`/`output` pass through redaction (spec 07) first.
 
 ## Common call shape
 
@@ -84,7 +84,6 @@ Permission `call_end`:
 ## Notes
 
 - **Harness-agnostic namespace:** op names use the tracer namespace `claude_weave.*` (not the harness's), and the active harness is recorded as the `harness` attribute — so traces from different harnesses share one schema.
-- **Redaction** (spec 08): `tool_input`, `tool_output`, and `prompt` are scrubbed before appearing in `inputs`/`output`.
+- **Redaction** (spec 07): `tool_input`, `tool_output`, and `prompt` are scrubbed before appearing in `inputs`/`output`.
 - **Timing rule** (spec 01): long-open spans (session, turn) may `call_start` early so the UI shows them live; short spans emit start+end together at close.
 - **OPEN:** exact `tool_output` shape per tool (Bash vs Edit vs Read …) and whether a tool-call id is present — confirmed by M0 capture.
-- **OTLP fallback:** same data as an OTEL span — `op_name`→span name, `attributes`+`summary`→span attributes, `started_at`/`ended_at`→span times, `exception`→span status, `parent_id`→parent span.

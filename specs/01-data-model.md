@@ -1,6 +1,6 @@
 # Spec 01 — Data model
 
-Three layers: **(A)** the wire event a hook sends the sidecar, **(B)** the sidecar's in-memory state, **(C)** the Weave call each span becomes. Ties to [02 wire-protocol], [05 correlation], [06 weave-mapping].
+Three layers: **(A)** the wire event a hook sends the sidecar, **(B)** the sidecar's in-memory state, **(C)** the Weave call each span becomes. Ties to spec 03 (wire), spec 05 (correlation), spec 06 (weave-mapping).
 
 ---
 
@@ -12,16 +12,17 @@ The hook stays dumb: it forwards the raw payload plus minimal envelope. The side
 @dataclass
 class WireEvent:
     v: int                 # schema version (=1)
-    event: str             # hook_event_name
-    session_id: str
+    harness: str           # active profile name (from --harness)
+    event: str             # native event name (from --event); sidecar maps to canonical
     captured_at: float     # hook wall-clock (epoch s); authoritative span timing
-    payload: dict          # raw harness hook stdin (per active profile), unmodified
+    payload: dict          # raw harness hook stdin, unmodified
     pid: int               # emitting hook pid (debug)
 ```
 
-- One newline-delimited JSON object per event (see [02]).
+- One newline-delimited JSON object per event (see spec 03).
+- The hook **parses nothing**: `harness`/`event` come from its launch args, `payload` is forwarded raw. The sidecar extracts `session_id`, `tool_name`, etc. via the profile's `[fields]` (spec 02) — so the hook needs no harness-specific field knowledge.
 - `captured_at` is stamped in the hook, not the sidecar — so queued/detached delivery doesn't skew span times.
-- Redaction happens in the **sidecar** before the call is sent to Weave, not here (keeps hooks trivial; see [07]).
+- Redaction happens in the **sidecar** before the call is sent to Weave, not here (keeps hooks trivial; see spec 07).
 
 ---
 
@@ -65,7 +66,7 @@ class Turn:
 
 @dataclass
 class ToolCall:
-    correlation_key: str                  # tool_use_id or fallback (see [05])
+    correlation_key: str                  # tool_use_id or fallback (see spec 05)
     call_id: str
     tool_name: str
     tool_input: dict                      # redacted
@@ -117,7 +118,7 @@ class WeaveCall:
     id: str                 # unique call id
     trace_id: str           # == session's trace_id
     parent_id: str | None    # parent call id (None only for root session)
-    op_name: str            # see [06]; e.g. "claude_weave.tool.Bash"
+    op_name: str            # see spec 06; e.g. "claude_weave.tool.Bash"
     started_at: float
     ended_at: float | None
     inputs: dict            # span-kind-specific (redacted)
@@ -140,9 +141,9 @@ class WeaveCall:
 
 ### Timing rule
 
-OTEL/Weave calls need start+end together, but hook events arrive separately. Rule: **stash `started_at` + ids at open; emit the call (`call_start` then `call_end`) at close**, using stored start + close `captured_at`. Long-open calls (session, turn) may `call_start` early so the UI shows them live — decided in [06].
+OTEL/Weave calls need start+end together, but hook events arrive separately. Rule: **stash `started_at` + ids at open; emit the call (`call_start` then `call_end`) at close**, using stored start + close `captured_at`. Long-open calls (session, turn) may `call_start` early so the UI shows them live — decided in spec 06.
 
-### Key attributes (illustrative; full schema in [06])
+### Key attributes (illustrative; full schema in spec 06)
 
 - session: `permission_mode`, `model`, `cwd`, `turn_count`
 - tool: `tool_name`, `status`, `duration_s`
@@ -155,5 +156,5 @@ OTEL/Weave calls need start+end together, but hook events arrive separately. Rul
 
 - **trace_id:** generated at `SessionStart`, one per session, lives in `Session`.
 - **call ids:** generated per span at open.
-- **correlation_key:** how Pre/Permission/Post find the same `ToolCall` — resolution chain in [05]; the **OPEN** question (is a stable `tool_use_id` in the payload?) is answered by M0 capture.
-- State is a **cache**, fully reconstructible from `transcript_path` — so sidecar crashes are recoverable (see [03]).
+- **correlation_key:** how Pre/Permission/Post find the same `ToolCall` — resolution chain in spec 05; the **OPEN** question (is a stable `tool_use_id` in the payload?) is answered by M0 capture.
+- State is a **cache**, fully reconstructible from `transcript_path` — so sidecar crashes are recoverable (see spec 04).

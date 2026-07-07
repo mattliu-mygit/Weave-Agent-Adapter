@@ -4,15 +4,13 @@ Detailed specs behind [`../DESIGN.md`](../DESIGN.md). Each is self-contained; `D
 
 | # | Spec | Status |
 |---|---|---|
-| 01 | [Data model](01-data-model.md) — sidecar state + Weave-call mapping | draft |
+| 01 | [Data model](01-data-model.md) — wire event, sidecar state, Weave-call mapping | draft |
 | 02 | [Harness profiles](02-harness-profiles.md) — harness-agnostic event/field/registration mapping | draft |
-| 03 | Wire protocol — hook↔sidecar socket, framing, spool fallback | todo |
-| 04 | Sidecar lifecycle — spawn, singleton, idle shutdown, crash recovery | todo |
-| 05 | Hook dispatcher — event routing, exit-0, detach, timeout | todo |
-| 06 | Correlation — `tool_use_id` resolution + fallbacks | todo |
-| 07 | [Weave mapping](07-weave-mapping.md) — what we send: call_start/end per span | draft |
-| 08 | Config — `config.toml`/env, active harness, redaction, sampling, WAL | todo |
-| 09 | Integration & packaging — plugin manifest, installer | todo |
-| 10 | OTLP-direct fallback (daemonless) | todo |
+| 03 | [Hook & wire protocol](03-wire-protocol.md) — dispatcher, socket, framing, best-effort delivery | draft |
+| 04 | [Sidecar lifecycle](04-sidecar-lifecycle.md) — spawn, singleton, idle shutdown, crash recovery | draft |
+| 05 | [Correlation](05-correlation.md) — `tool_use_id` resolution + fallbacks | draft |
+| 06 | [Weave mapping](06-weave-mapping.md) — what we send: call_start/end per span | draft |
+| 07 | [Config](07-config.md) — `config.toml`/env, active harness, redaction, sampling, WAL | draft |
+| 08 | [Integration & packaging](08-integration.md) — plugin, installer, CLI | draft |
 
 Convention: specs describe *intended* behavior. Anything unverified against a harness / Weave runtime is marked **OPEN** and resolved by M0 capture or a spike.

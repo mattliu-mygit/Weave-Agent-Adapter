@@ -88,16 +88,16 @@ Because the sidecar runs the SDK, we get for free: **WAL** (`WEAVE_ENABLE_WAL=tr
 ## 11. Lifecycle
 
 - **Spawn:** `SessionStart` (lazy, singleton). **Shutdown:** idle ~60–120s after last session / empty queue, post-flush.
-- **Crash / no `SessionEnd`:** sweep sessions idle > TTL, finalize open calls `incomplete`. `WEAVE_ENABLE_WAL` makes queued sends crash-safe.
+- **Crash / no `SessionEnd`:** a periodic sweep drops sessions idle > TTL (frees memory); orphaned open calls are left as-is (best-effort). `WEAVE_ENABLE_WAL` covers delivery durability.
 - **Subagents:** `SubagentStart/Stop` nest via `agent_id`. **Compaction:** `PreCompact/PostCompact` annotate.
 
 ## 12. Integration (zero authored lines)
 
 One static command (`claude-weave hook`) per event; dispatcher branches on `hook_event_name`. Ladder: **plugin** (0 lines) → `claude-weave install` (1 command) → paste generated block (~9 entries). No all-events wildcard, so entries are generated per event.
 
-## 13. Fallback: OTLP-direct (daemonless)
+## 13. Non-goals (v1)
 
-If a sidecar is unwanted, hooks POST OTLP protobuf straight to Weave (double-fork + detach, ~ms on-path). Loses SDK WAL/batching/retry/redaction; add a mini-spool for best-effort. Same span model + dispatcher — a config toggle.
+- **Custom durability / crash-recovery layer** — v1 is best-effort and leans on Weave's WAL; no bespoke spool/replay.
 
 ## 14. Milestones
 
@@ -105,5 +105,5 @@ If a sidecar is unwanted, hooks POST OTLP protobuf straight to Weave (double-for
 - **M1 — Sidecar + core tree:** socket, warm `weave.init`, session/turn/tool spans, cross-process nesting.
 - **M2 — Permission/approval/rejection/steering.**
 - **M3 — Redaction, sampling, WAL, config.**
-- **M4 — Crash reconciliation, subagents, compaction; OTLP fallback mode.**
+- **M4 — Subagents, compaction, hardening.**
 - **M5 — Plugin + pip packaging.**
