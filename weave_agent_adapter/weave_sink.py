@@ -1,41 +1,56 @@
 """Weave-backed sink (spec 06): log WeaveCalls to W&B Weave.
 
-Uses the SDK's low-level `create_call` / `finish_call` with an explicit parent
-`Call` — our spans are built out-of-process, so there's no `@weave.op` / in-process
-stack to nest through (`use_stack=False`). `weave.init()` runs once; Weave assigns
-the ids and we map them from our span ids.
+Uses the low-level `call_start` / `call_end` trace-server API rather than the
+`create_call` decorator path, because that's the only surface that accepts
+**explicit timestamps** (`started_at`/`ended_at`) and **explicit ids**
+(`id`/`trace_id`/`parent_id`). Our spans are reconstructed out-of-process, so we
+must supply our own ids and our hook-stamped `captured_at` — otherwise Weave
+would stamp wall-clock at ingest time and the durations would be wrong.
 
-`weave` is imported lazily so importing this module (and the hook path) needs no
-Weave install — only constructing a WeaveSink does.
+Delivery still goes through the client's async batch processor (`client.server`),
+so batching/retry/WAL are unchanged. `weave` is imported lazily.
 """
 from __future__ import annotations
+
+import datetime
 
 from .model import WeaveCall
 from .sink import Sink
 
 
+def _dt(ts: float) -> datetime.datetime:
+    return datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc)
+
+
 class WeaveSink(Sink):
     def __init__(self, project: str):
         import weave
+        from weave.trace_server import trace_server_interface as tsi
 
+        self._tsi = tsi
         self._client = weave.init(project)
-        self._calls: dict = {}          # our WeaveCall.id -> Weave Call
+        self._server = self._client.server
+        self._project_id = f"{self._client.entity}/{self._client.project}"
 
     def start(self, wc: WeaveCall) -> None:
-        parent = self._calls.get(wc.parent_id)
-        self._calls[wc.id] = self._client.create_call(
-            op=wc.op_name, inputs=wc.inputs or {}, parent=parent,
-            attributes=wc.attributes or {}, use_stack=False,
-        )
+        self._server.call_start(self._tsi.CallStartReq(
+            start=self._tsi.StartedCallSchemaForInsert(
+                project_id=self._project_id, id=wc.id, op_name=wc.op_name,
+                trace_id=wc.trace_id, parent_id=wc.parent_id,
+                started_at=_dt(wc.started_at),
+                attributes=wc.attributes or {}, inputs=wc.inputs or {},
+            )
+        ))
 
     def end(self, wc: WeaveCall) -> None:
-        call = self._calls.pop(wc.id, None)
-        if call is None:
-            return
-        if wc.attributes:               # end-time metadata (status, decision, ...)
-            call.summary = {**(call.summary or {}), **wc.attributes}
-        exc = Exception(wc.exception) if wc.exception else None
-        self._client.finish_call(call, output=wc.output, exception=exc)
+        self._server.call_end(self._tsi.CallEndReq(
+            end=self._tsi.EndedCallSchemaForInsert(
+                project_id=self._project_id, id=wc.id,
+                ended_at=_dt(wc.ended_at if wc.ended_at is not None else wc.started_at),
+                output=wc.output, exception=wc.exception,
+                summary=wc.attributes or {},
+            )
+        ))
 
     def flush(self) -> None:
         try:

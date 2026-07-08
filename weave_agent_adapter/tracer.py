@@ -27,7 +27,7 @@ NS = "weave_agent_adapter"
 
 
 def _id() -> str:
-    return uuid.uuid4().hex
+    return str(uuid.uuid4())          # Weave requires round-trippable UUID ids
 
 
 class Tracer:
