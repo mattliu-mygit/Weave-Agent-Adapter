@@ -123,7 +123,8 @@ def test_subagent_stop_annotation():
     agent = one(sink, f"{NS}.agent.Explore")
     assert agent.inputs["agent_type"] == "Explore"
     assert agent.inputs["agent_id"] == "a9"
-    assert end_of(sink, agent.id).output == "found 3 files"   # subagent's reply
+    # stop-only: no output (last_assistant_message isn't reliably the subagent's reply)
+    assert end_of(sink, agent.id).output is None
 
 
 def test_subagent_interior_tool_nests_under_subagent():

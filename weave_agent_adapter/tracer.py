@@ -306,18 +306,20 @@ class Tracer:
         started = rec["started_at"] if rec else at   # stop-only: zero-duration marker
         cid = rec["call_id"] if rec else _id()
         if rec is None:
-            # stop-only harness (e.g. Claude Code has no SubagentStart): the span
-            # is just the completion, but still carries the subagent's identity + reply
+            # stop-only (e.g. Claude Code has no SubagentStart): a bare marker with
+            # the subagent's identity. We do NOT record last_assistant_message here:
+            # on the stop-only path it isn't reliably the subagent's own reply.
             self.sink.start(WeaveCall(
                 id=cid, trace_id=s.trace_id, op_name=f"{NS}.agent.{atype}",
                 started_at=started, parent_id=t.call_id,
                 inputs={"agent_type": atype, "agent_id": aid},
                 attributes={NS: {"kind": "subagent", "phase": "stop", "agent_type": atype}},
             ))
+        # output only when we tracked the span's start (interior tools / SubagentStart)
+        output = self.redactor.scrub(f.get("agent_output")) if rec is not None else None
         self.sink.end(WeaveCall(
             id=cid, trace_id=s.trace_id, op_name=f"{NS}.agent.{atype}",
-            started_at=started, ended_at=at,
-            output=self.redactor.scrub(f.get("agent_output")),
+            started_at=started, ended_at=at, output=output,
             attributes={NS: {"status": "ok"}},
         ))
 
