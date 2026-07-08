@@ -7,7 +7,7 @@
 - **Normal Weave usage.** `weave.init()` once, warm client for the session → async batching, retry, and native call rendering come from the SDK; redaction and sampling are ours (see §9).
 - **Non-intrusive.** The harness is never modified. Hooks are external one-line commands (plugin auto-registers; 0 authored lines). The sidecar is a separate process beside the harness, not inside it.
 - **Never block, never break.** Hooks do a µs local write and exit 0; all failure swallowed.
-- **Harness-agnostic.** The core runs on a fixed set of **canonical actions**; each harness plugs in via an **adapter** (its hook mechanism) + a declarative **profile** (its event/field/registration mapping), [spec 02](specs/02-harness-profiles.md). Assumes the harness has a hook (or hook-like) system. Command-based hooks reuse one adapter, so most harnesses are profile-only, no code. Two profiles ship, Claude Code and **Codex** (`profiles/codex.toml`); Codex was added with *zero* code changes, the concrete proof of the claim. (Codex also emits `SubagentStart` in practice, which Claude Code documents but doesn't emit in 2.1.201, so the two profiles genuinely exercise different event paths.) Event names below reflect the Claude Code profile.
+- **Harness-agnostic.** The core runs on a fixed set of **canonical actions**; each harness plugs in via an **adapter** (its hook mechanism) + a declarative **profile** (its event/field/registration mapping), [spec 02](02-harness-profiles.md). Assumes the harness has a hook (or hook-like) system. Command-based hooks reuse one adapter, so most harnesses are profile-only, no code. Two profiles ship, Claude Code and **Codex** (`profiles/codex.toml`); Codex was added with *zero* code changes, the concrete proof of the claim. (Codex also emits `SubagentStart` in practice, which Claude Code documents but doesn't emit in 2.1.201, so the two profiles genuinely exercise different event paths.) Event names below reflect the Claude Code profile.
 
 ## 2. Architecture
 
@@ -58,7 +58,7 @@ One trace per session (root call). Nesting via explicit `trace_id`/`parent_id` h
 | `Stop` | emit `stop`; close `turn` |
 | `SessionEnd` | close `session`; flush |
 
-_Native event names above are the Claude Code profile ([profiles/claude-code.toml](weave_agent_adapter/profiles/claude-code.toml)); other harnesses map their own via [spec 02](specs/02-harness-profiles.md)._
+_Native event names above are the Claude Code profile ([profiles/claude-code.toml](../weave_agent_adapter/profiles/claude-code.toml)); other harnesses map their own via [spec 02](02-harness-profiles.md)._
 
 ## 6. Correlation (in-memory in sidecar)
 
@@ -105,7 +105,7 @@ One static command per event, `weave-agent-adapter hook --harness <h> --event <e
 - **M2, Permission/approval/rejection/steering:** ✅ (as tool attributes + steering spans).
 - **M3, Redaction, sampling, config:** ✅
 - **M4, Subagents, compaction, hardening:** ✅ canonical `subagent_start`/`subagent_stop` (stop-only harnesses annotate) + `compaction`; Claude Code maps `SubagentStop`/`PreCompact`.
-- **M5, Packaging + installer:** ✅ pyproject + `install`/`uninstall` + `plugin` (ships `.claude-plugin/plugin.json` + `hooks/hooks.json`, in [plugin/claude-code](plugin/claude-code)).
+- **M5, Packaging + installer:** ✅ pyproject + `install`/`uninstall` + `plugin` (ships `.claude-plugin/plugin.json` + `hooks/hooks.json`, in [plugin/claude-code](../plugin/claude-code)).
 
 ## 15. Prior art & the SDK-vs-OTLP decision (verified)
 

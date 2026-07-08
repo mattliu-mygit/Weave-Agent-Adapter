@@ -1,6 +1,6 @@
 # weave-agent-adapter specs
 
-Detailed specs behind [`../DESIGN.md`](../DESIGN.md). Each is self-contained; `DESIGN.md` stays the high-level map.
+Detailed specs behind [`DESIGN.md`](DESIGN.md). Each is self-contained; `DESIGN.md` stays the high-level map.
 
 | # | Spec | Status |
 |---|---|---|
