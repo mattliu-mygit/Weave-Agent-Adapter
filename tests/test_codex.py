@@ -52,7 +52,9 @@ def test_codex_subagent_start_stop_is_a_real_span():
 
 def test_codex_session_closes_via_sweep_without_session_end():
     # Codex emits no SessionEnd; the sweep must finalize the session.
-    tr, sink = run([("SessionStart", {"session_id": SID})], t0=1000.0, harness=CX)
+    tr, sink = run([("SessionStart", {"session_id": SID}),
+                    ("UserPromptSubmit", {"session_id": SID, "prompt": "p"})],
+                   t0=1000.0, harness=CX)
     assert tr.sessions                            # still open (no SessionEnd)
     tr.sweep(now=1000.0 + 10_000, ttl=60.0)
     assert not tr.sessions

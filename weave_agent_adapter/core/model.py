@@ -115,6 +115,7 @@ class Session:
     status: SessionStatus = SessionStatus.OPEN
     current_turn: Optional[Turn] = None
     turn_count: int = 0
+    emitted: bool = False                   # session span emitted lazily on first turn
 
 
 # --- Layer C: Weave call ---

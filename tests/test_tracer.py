@@ -95,10 +95,13 @@ def test_project_per_repo_stamps_project_from_cwd():
                 project_per_repo=True)
     tr.handle(WireEvent(1, "claude-code", "SessionStart", 1.0,
                         {"session_id": SID, "cwd": "/Users/me/my-repo"}, 1))
+    tr.handle(WireEvent(1, "claude-code", "UserPromptSubmit", 1.5,
+                        {"session_id": SID, "prompt": "hi"}, 1))   # surfaces the session
     session = one(tr.sink, f"{NS}.session")
     assert session.project == "my-repo"           # leaf of cwd, not the default
     # a session with no cwd falls back to the configured default
     tr.handle(WireEvent(1, "claude-code", "SessionStart", 2.0, {"session_id": "s2"}, 1))
+    tr.handle(WireEvent(1, "claude-code", "UserPromptSubmit", 2.5, {"session_id": "s2", "prompt": "hi"}, 1))
     s2 = [c for c in starts(tr.sink) if c.op_name == f"{NS}.session"][1]
     assert s2.project == "default-proj"
 
@@ -175,6 +178,16 @@ def test_compaction_under_session_root():
     assert comp.attributes[NS]["trigger"] == "auto"
 
 
+def test_turnless_session_emits_nothing():
+    # a session opened and closed with no user prompt (background/quick-open) is dropped
+    tr, sink = run([
+        ("SessionStart", {"session_id": SID, "cwd": "/repo"}),
+        ("SessionEnd", {"session_id": SID}),
+    ])
+    assert starts(sink) == []
+    assert not tr.sessions
+
+
 def test_sampling_excludes_session():
     tr, sink = run([("SessionStart", {"session_id": SID})], session_rate=0.0)
     assert starts(sink) == []
@@ -182,8 +195,9 @@ def test_sampling_excludes_session():
 
 
 def test_sweep_finalizes_stale_session():
-    tr, sink = run([("SessionStart", {"session_id": SID})], t0=1000.0)
-    # last_activity == 1000; sweep well past the ttl
+    tr, sink = run([("SessionStart", {"session_id": SID}),
+                    ("UserPromptSubmit", {"session_id": SID, "prompt": "p"})], t0=1000.0)
+    # a turn was opened, so the session is live; sweep well past the ttl
     swept = tr.sweep(now=1000.0 + 10_000, ttl=60.0)
     assert swept == 1
     assert not tr.sessions

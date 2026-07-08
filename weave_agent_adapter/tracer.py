@@ -94,9 +94,18 @@ class Tracer:
             permission_mode=f.get("permission_mode"), cwd=cwd,
         )
         self.sessions[sid] = s
+        # the session span is emitted lazily on the first turn (see _ensure_session):
+        # Claude Code opens many turn-less sessions (background suggestion/title
+        # agents, resumes, quick opens) we don't want cluttering the dashboard.
+
+    def _ensure_session(self, s: Session) -> None:
+        if s.emitted:
+            return
+        s.emitted = True
         self.sink.start(WeaveCall(
             id=s.root_call_id, trace_id=s.trace_id, op_name=f"{NS}.session",
-            started_at=at, parent_id=None, inputs={"session_id": sid}, project=s.project,
+            started_at=s.started_at, parent_id=None, inputs={"session_id": s.session_id},
+            project=s.project,
             attributes={NS: {"kind": "session", "harness": self.profile.name,
                              "permission_mode": s.permission_mode, "cwd": s.cwd}},
         ))
@@ -107,6 +116,8 @@ class Tracer:
             self._finalize(s, at)
 
     def _finalize(self, s: Session, at, incomplete: bool = False) -> None:
+        if not s.emitted:
+            return                            # no turns ever -> never surfaced, drop it
         self._close_turn(s, at)
         s.status = SessionStatus.CLOSED
         out = {"turn_count": s.turn_count, "status": s.status.value}
@@ -141,6 +152,7 @@ class Tracer:
             # a user message mid-turn is steering, not a new turn
             self._emit_steering(s, at, SteeringKind.INTERJECTION, text=prompt)
             return
+        self._ensure_session(s)               # first real turn -> surface the session
         t = Turn(call_id=_id(), index=s.turn_count, started_at=at, input_text=prompt)
         s.current_turn = t
         s.turn_count += 1
@@ -333,6 +345,7 @@ class Tracer:
         s = self.sessions.get(sid)
         if not s:
             return
+        self._ensure_session(s)
         self._instant(s, s.root_call_id, f"{NS}.compaction", at,
                       attrs={"kind": "compaction", "trigger": f.get("compaction_trigger")})
 
