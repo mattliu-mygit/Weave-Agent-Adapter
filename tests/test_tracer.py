@@ -127,6 +127,17 @@ def test_subagent_stop_annotation():
     assert end_of(sink, agent.id).output is None
 
 
+def test_background_subagent_stop_is_ignored():
+    # Claude Code fires SubagentStop for its own background agents (prompt
+    # suggestions, title gen) with no agent_type; those must not create a span.
+    tr, sink = run([
+        ("SessionStart", {"session_id": SID}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
+        ("SubagentStop", {"session_id": SID, "last_assistant_message": "Yes, do it"}),
+    ])
+    assert not [c for c in starts(sink) if ".agent" in c.op_name]
+
+
 def test_subagent_interior_tool_nests_under_subagent():
     # Claude Code has no SubagentStart: an interior tool (agent_id set) must
     # lazily open the subagent span and nest under it, then SubagentStop closes it.

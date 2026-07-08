@@ -301,6 +301,11 @@ class Tracer:
         rec = t.subagents.pop(aid, None) if aid else None
         if rec is None and t.subagents:
             aid, rec = t.subagents.popitem()      # no id match: close most-recent (LIFO)
+        if rec is None and not f.get("agent_type"):
+            # a SubagentStop we never tracked and with no agent_type is Claude Code's
+            # own background agent (prompt-suggestion / title generation), not a user
+            # subagent. Skip it so it doesn't show as a spurious empty `agent` span.
+            return
         atype = (rec["type"] if rec else f.get("agent_type")) or "agent"
         aid = aid or f.get("agent_id")
         started = rec["started_at"] if rec else at   # stop-only: zero-duration marker
