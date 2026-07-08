@@ -1,6 +1,5 @@
-# Example weave-agent-adapter config.
-# Consumed by the sidecar starting M1 — NOT used by M0 capture.
-# Copy to ~/.weave-agent-adapter/config.toml and edit.
+# Example weave-agent-adapter config — read by the sidecar (env > this file > defaults).
+# Copy to ~/.weave-agent-adapter/config.toml and edit. The hook needs no config.
 
 active_harness = "claude-code"        # -> profiles/<name>.toml
 
@@ -11,8 +10,8 @@ project = "claude-code"
 enable_wal = true                      # crash-safe queued sends (WEAVE_ENABLE_WAL)
 
 [redaction]
-redact_pii  = false                    # Presidio-based PII scrubbing
-redact_keys = ["api_key", "authorization", "token", "password"]
+enabled     = true                     # scrub secrets before sending (default true)
+redact_keys = ["api_key", "authorization", "token", "password"]  # extra deny keys; omit for defaults
 
 [sampling]
 session_rate = 1.0                     # fraction of sessions traced (root-only)

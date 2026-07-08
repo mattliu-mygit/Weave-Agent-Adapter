@@ -22,12 +22,13 @@ ACCEPT_TIMEOUT_S = 0.5
 
 
 class Sidecar:
-    def __init__(self, sink, project, socket_path, profiles_dir=None, idle_s=120.0):
+    def __init__(self, sink, project, socket_path, profiles_dir=None, idle_s=120.0, redactor=None):
         self.sink = sink
         self.project = project
         self.socket_path = socket_path
         self.profiles_dir = profiles_dir
         self.idle_s = idle_s
+        self.redactor = redactor
         self.tracers: dict = {}
         self._stop = threading.Event()
         self._lock_fd = None
@@ -36,7 +37,8 @@ class Sidecar:
     def _tracer_for(self, harness: str) -> Tracer:
         tr = self.tracers.get(harness)
         if tr is None:
-            tr = Tracer(load_profile(harness, self.profiles_dir), self.project, self.sink)
+            tr = Tracer(load_profile(harness, self.profiles_dir), self.project, self.sink,
+                        redactor=self.redactor)
             self.tracers[harness] = tr
         return tr
 
