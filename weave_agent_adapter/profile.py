@@ -19,9 +19,7 @@ except ModuleNotFoundError:            # py < 3.11
         _toml = None
 
 
-DEFAULT_PROFILES_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)), "profiles"
-)
+DEFAULT_PROFILES_DIR = os.path.join(os.path.dirname(__file__), "profiles")
 
 
 def _dig(obj: Any, dotted: str) -> Any:

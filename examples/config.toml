@@ -1,7 +1,7 @@
 # Example weave-agent-adapter config — read by the sidecar (env > this file > defaults).
 # Copy to ~/.weave-agent-adapter/config.toml and edit. The hook needs no config.
 
-active_harness = "claude-code"        # -> profiles/<name>.toml
+active_harness = "claude-code"        # -> weave_agent_adapter/profiles/<name>.toml
 
 [weave]
 entity  = "your-entity"

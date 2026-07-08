@@ -12,7 +12,7 @@ Only the **sidecar** reads `config.toml`. The **hook stays parse-free** (spec 03
 
 | Key | Env override | Default | Meaning |
 |---|---|---|---|
-| `active_harness` | `WEAVE_AGENT_ADAPTER_HARNESS` | `claude-code` | profile in `profiles/<name>.toml` (spec 02) |
+| `active_harness` | `WEAVE_AGENT_ADAPTER_HARNESS` | `claude-code` | profile in `weave_agent_adapter/profiles/<name>.toml` (spec 02) |
 | `weave.entity` | `WANDB_ENTITY` | — | Weave entity |
 | `weave.project` | `WEAVE_PROJECT` | `claude-code` | Weave project |
 | `weave.enable_wal` | `WEAVE_ENABLE_WAL` | `true` | crash-safe queued sends |

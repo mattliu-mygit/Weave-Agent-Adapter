@@ -58,7 +58,7 @@ One trace per session (root call). Nesting via explicit `trace_id`/`parent_id` h
 | `Stop` | emit `stop`; close `turn` |
 | `SessionEnd` | close `session`; flush |
 
-_Native event names above are the Claude Code profile ([profiles/claude-code.toml](profiles/claude-code.toml)); other harnesses map their own via [spec 02](specs/02-harness-profiles.md)._
+_Native event names above are the Claude Code profile ([profiles/claude-code.toml](weave_agent_adapter/profiles/claude-code.toml)); other harnesses map their own via [spec 02](specs/02-harness-profiles.md)._
 
 ## 6. Correlation (in-memory in sidecar)
 
