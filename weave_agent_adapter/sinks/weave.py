@@ -41,7 +41,7 @@ class WeaveSink(Sink):
         self._server.call_start(self._tsi.CallStartReq(
             start=self._tsi.StartedCallSchemaForInsert(
                 project_id=self._project_id, id=wc.id, op_name=wc.op_name,
-                trace_id=wc.trace_id, parent_id=wc.parent_id,
+                trace_id=wc.trace_id, parent_id=wc.parent_id, thread_id=wc.thread_id,
                 started_at=_dt(wc.started_at),
                 attributes=wc.attributes or {}, inputs=wc.inputs or {},
             )

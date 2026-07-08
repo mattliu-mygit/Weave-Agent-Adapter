@@ -18,6 +18,7 @@ Provisional field names (confirmed/adjusted via M0, and only in the profile):
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import uuid
@@ -97,12 +98,35 @@ class Tracer:
         s = Session(
             session_id=sid, trace_id=_id(), root_call_id=_id(), project=self._project_for(cwd),
             started_at=at, last_activity=at,
-            permission_mode=f.get("permission_mode"), cwd=cwd,
+            permission_mode=f.get("permission_mode"), cwd=cwd, transcript=f.get("transcript"),
         )
         self.sessions[sid] = s
         # the session span is emitted lazily on the first turn (see _ensure_session):
         # Claude Code opens many turn-less sessions (background suggestion/title
         # agents, resumes, quick opens) we don't want cluttering the dashboard.
+
+    def _thread_of(self, s: Session) -> Optional[str]:
+        # the conversation's root message uuid (parentUuid=None) is copied verbatim
+        # into every resume/edit, so it's a fork-stable thread id. Read it once from
+        # the transcript, streaming and stopping at the root row (near the top).
+        if s.thread_id is not None or not s.transcript:
+            return s.thread_id
+        try:
+            with open(s.transcript) as fh:
+                for i, line in enumerate(fh):
+                    if i >= 100:                  # bound the scan; root is at the top
+                        break
+                    line = line.strip()
+                    if not line:
+                        continue
+                    r = json.loads(line)
+                    if (r.get("type") == "user" and not r.get("isSidechain")
+                            and r.get("parentUuid") is None):
+                        s.thread_id = r.get("uuid")
+                        break
+        except Exception:
+            pass
+        return s.thread_id
 
     def _ensure_session(self, s: Session) -> None:
         if s.emitted:
@@ -111,7 +135,7 @@ class Tracer:
         self.sink.start(WeaveCall(
             id=s.root_call_id, trace_id=s.trace_id, op_name=f"{NS}.session",
             started_at=s.started_at, parent_id=None, inputs={"session_id": s.session_id},
-            project=s.project,
+            project=s.project, thread_id=self._thread_of(s),
             attributes={NS: {"kind": "session", "harness": self.profile.name,
                              "permission_mode": s.permission_mode, "cwd": s.cwd}},
         ))
@@ -164,7 +188,7 @@ class Tracer:
         s.turn_count += 1
         self.sink.start(WeaveCall(
             id=t.call_id, trace_id=s.trace_id, op_name=f"{NS}.turn", started_at=at,
-            parent_id=s.root_call_id, inputs={"prompt": t.input_text},
+            parent_id=s.root_call_id, inputs={"prompt": t.input_text}, thread_id=s.thread_id,
             attributes={NS: {"kind": "turn", "index": t.index}},
         ))
         self._instant(s, t.call_id, f"{NS}.input", at,

@@ -211,6 +211,28 @@ def test_subagent_interior_after_turn_stop_still_nests():
     assert inner.parent_id == agent.id                    # interior tool nests under subagent
 
 
+def test_thread_id_from_transcript_root(tmp_path):
+    import json
+    from weave_agent_adapter.core.model import WireEvent
+    from weave_agent_adapter.profile import load_profile
+    from weave_agent_adapter.sinks.recording import RecordingSink
+    from weave_agent_adapter.tracer import Tracer
+    tp = tmp_path / "t.jsonl"
+    tp.write_text("\n".join([
+        json.dumps({"type": "queue-operation"}),                       # skipped
+        json.dumps({"type": "user", "isSidechain": False, "parentUuid": None,
+                    "uuid": "ROOT-UUID", "message": {"role": "user", "content": "hi"}}),
+        json.dumps({"type": "assistant", "parentUuid": "ROOT-UUID"}),
+    ]))
+    tr = Tracer(load_profile("claude-code"), "p", RecordingSink())
+    for name, p in [("SessionStart", {"session_id": "s", "transcript_path": str(tp)}),
+                    ("UserPromptSubmit", {"session_id": "s", "prompt": "hi", "transcript_path": str(tp)})]:
+        tr.handle(WireEvent(1, "claude-code", name, 1.0, p, 1))
+    # both the session and turn carry the fork-stable conversation id
+    assert one(tr.sink, f"{NS}.session").thread_id == "ROOT-UUID"
+    assert one(tr.sink, f"{NS}.turn").thread_id == "ROOT-UUID"
+
+
 def test_turnless_session_emits_nothing():
     # a session opened and closed with no user prompt (background/quick-open) is dropped
     tr, sink = run([

@@ -112,6 +112,8 @@ class Session:
     last_activity: float                    # drives idle shutdown
     permission_mode: Optional[str] = None
     cwd: Optional[str] = None
+    transcript: Optional[str] = None        # transcript path; read once for the thread id
+    thread_id: Optional[str] = None         # conversation root uuid (fork-stable)
     status: SessionStatus = SessionStatus.OPEN
     current_turn: Optional[Turn] = None
     turn_count: int = 0
@@ -133,3 +135,4 @@ class WeaveCall:
     attributes: dict = field(default_factory=dict)
     exception: Optional[str] = None         # set for ERROR tool calls
     project: Optional[str] = None            # set on the session-root call; routes the trace's project
+    thread_id: Optional[str] = None          # conversation id; links forks/resumes in Weave threads
