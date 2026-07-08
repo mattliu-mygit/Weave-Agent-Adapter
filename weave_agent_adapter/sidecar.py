@@ -1,15 +1,18 @@
 """Sidecar (specs 03/04): receive wire events on a Unix socket and trace them.
 
 Hosts one `Tracer` per harness (routed on `WireEvent.harness`) sharing a single
-sink, so concurrent harnesses trace side by side. This is the receive + route
-core; lifecycle (lazy spawn, singleton lock, idle shutdown) is layered in spec 04.
+sink, so concurrent harnesses trace side by side. Singleton via an advisory
+`flock` (extra spawns fail the lock and exit); scales to zero after `idle_s`
+with no events.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import socket
 import threading
+import time
 
 from .model import WireEvent
 from .profile import load_profile
@@ -19,13 +22,16 @@ ACCEPT_TIMEOUT_S = 0.5
 
 
 class Sidecar:
-    def __init__(self, sink, project, socket_path, profiles_dir=None):
+    def __init__(self, sink, project, socket_path, profiles_dir=None, idle_s=120.0):
         self.sink = sink
         self.project = project
         self.socket_path = socket_path
         self.profiles_dir = profiles_dir
+        self.idle_s = idle_s
         self.tracers: dict = {}
         self._stop = threading.Event()
+        self._lock_fd = None
+        self._last = 0.0
 
     def _tracer_for(self, harness: str) -> Tracer:
         tr = self.tracers.get(harness)
@@ -50,8 +56,20 @@ class Sidecar:
         except Exception:
             pass
 
-    def serve(self) -> None:
+    def _acquire_singleton_lock(self) -> bool:
         os.makedirs(os.path.dirname(self.socket_path), exist_ok=True)
+        fd = open(self.socket_path + ".lock", "w")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            fd.close()
+            return False
+        self._lock_fd = fd
+        return True
+
+    def serve(self) -> None:
+        if not self._acquire_singleton_lock():
+            return                       # another sidecar already owns this socket
         if os.path.exists(self.socket_path):
             os.remove(self.socket_path)
         srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -59,11 +77,14 @@ class Sidecar:
         os.chmod(self.socket_path, 0o600)
         srv.listen(64)
         srv.settimeout(ACCEPT_TIMEOUT_S)
+        self._last = time.time()
         try:
             while not self._stop.is_set():
                 try:
                     conn, _ = srv.accept()
                 except socket.timeout:
+                    if time.time() - self._last > self.idle_s:
+                        break            # idle: scale to zero
                     continue
                 except OSError:
                     break
@@ -81,10 +102,13 @@ class Sidecar:
                     for line in buf.split(b"\n"):
                         if line.strip():
                             self._handle_line(line)
+                self._last = time.time()
         finally:
             srv.close()
             if os.path.exists(self.socket_path):
                 os.remove(self.socket_path)
+            if self._lock_fd:
+                self._lock_fd.close()
 
     def stop(self) -> None:
         self._stop.set()
