@@ -13,8 +13,7 @@ session
 └── turn                     "add logging to auth.py"
     ├── input                the prompt
     ├── tool:Bash            approved (auto)
-    ├── tool:Edit            rejected
-    │   └── permission       deny · "use the logger, not print"
+    ├── tool:Edit            rejected · deny "use the logger, not print"
     ├── steering             user redirect mid-turn
     └── tool:Edit            approved (user)
 ```

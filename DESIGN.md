@@ -37,8 +37,7 @@
 session (root)                 SessionStart → SessionEnd
 └── turn                       UserPromptSubmit → Stop
     ├── input                  the prompt
-    ├── tool:<name>            PreToolUse → PostToolUse
-    │   └── permission         PermissionRequest → allow|deny
+    ├── tool:<name>            PreToolUse → PostToolUse (+ permission attrs)
     ├── steering               mid-turn interjection / input rewrite
     └── stop
 ```
@@ -53,9 +52,9 @@ One trace per session (root call). Nesting via explicit `trace_id`/`parent_id` h
 | `UserPromptSubmit` (no open turn) | open `turn`; emit `input` |
 | `UserPromptSubmit` (turn open) | emit `steering` (interjection) |
 | `PreToolUse` | open `tool:<name>` under turn |
-| `PermissionRequest` | open `permission` under tool |
-| `PermissionDenied` | close permission `deny`; mark tool rejected |
-| `PostToolUse` / `…Failure` | close permission `allow`; close tool ok/error |
+| `PermissionRequest` | record on tool (prompt shown) |
+| `PermissionDenied` | close tool `rejected` (deny attrs) |
+| `PostToolUse` / `…Failure` | close tool ok/error (allow attrs) |
 | `Stop` | emit `stop`; close `turn` |
 | `SessionEnd` | close `session`; flush |
 
@@ -67,8 +66,8 @@ Match `Pre ↔ Permission ↔ Post` to one tool call: primary = a tool-call id f
 
 ## 7. Approval / steering / rejection
 
-- **Approval:** inferred — tool reaching `PostToolUse` closes its permission span as `allow` (source: user/hook/auto).
-- **Rejection:** `PermissionDenied` → permission `deny` + reason; tool rejected.
+- **Approval:** inferred — a tool reaching `PostToolUse` was allowed; recorded as tool attributes (`permission_decision=allow`, `permission_source`, `prompt_shown`), not a span.
+- **Rejection:** `PermissionDenied` → tool closed `rejected` with `permission_decision=deny` + `denial_reason`.
 - **Steering:** (a) `UserPromptSubmit` before `Stop`; (b) denial with feedback; (c) `PreToolUse` `updatedInput`. Each = a `steering` span.
 
 ## 8. Concurrency, singleton & isolation

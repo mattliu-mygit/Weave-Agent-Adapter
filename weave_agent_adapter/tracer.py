@@ -149,27 +149,26 @@ class Tracer:
         return tc
 
     def _on_permission_request(self, sid, f, at) -> None:
+        # recorded on the tool (prompt shown), not a span of its own
         s, tc = self._locate_tool(sid, f)
-        if not tc:
-            return
-        tc.permission = Permission(call_id=_id(), requested_at=at, decision=Decision.PENDING)
-        self.sink.start(WeaveCall(
-            id=tc.permission.call_id, trace_id=s.trace_id, op_name=f"{NS}.permission",
-            started_at=at, parent_id=tc.call_id, inputs={"tool_name": tc.tool_name},
-            attributes={NS: {"kind": "permission"}},
-        ))
+        if tc:
+            tc.permission = Permission(requested_at=at)
 
     def _on_permission_denied(self, sid, f, at) -> None:
         s, tc = self._locate_tool(sid, f)
         if not tc:
             return
-        self._close_permission(s, tc, Decision.DENY, f.get("denial_reason"), at)
+        p = tc.permission or Permission()
+        p.decision, p.reason = Decision.DENY, f.get("denial_reason")
+        tc.permission = p
         tc.status = ToolStatus.REJECTED
         tc.ended_at = at
         self.sink.end(WeaveCall(
             id=tc.call_id, trace_id=s.trace_id, op_name=f"{NS}.tool.{tc.tool_name}",
             started_at=tc.started_at, ended_at=at, output=None,
-            attributes={NS: {"status": tc.status.value, "permission_decision": "deny"}},
+            attributes={NS: {"status": "rejected", "permission_decision": "deny",
+                             "denial_reason": p.reason,
+                             "prompt_shown": p.requested_at is not None}},
         ))
 
     def _on_tool_post(self, sid, f, at) -> None:
@@ -189,9 +188,9 @@ class Tracer:
         elif tc.status != ToolStatus.RUNNING:
             return
         # approval is inferred: a tool that ran was allowed
-        if tc.permission and tc.permission.decision == Decision.PENDING:
-            self._close_permission(s, tc, Decision.ALLOW, None, at)
-        source = "user" if tc.permission else "auto"
+        prompted = bool(tc.permission and tc.permission.requested_at)
+        if tc.permission:
+            tc.permission.decision = Decision.ALLOW
         tc.status = ToolStatus.OK if ok else ToolStatus.ERROR
         tc.ended_at = at
         tc.output = f.get("tool_output") if ok else None
@@ -199,8 +198,9 @@ class Tracer:
         self.sink.end(WeaveCall(
             id=tc.call_id, trace_id=s.trace_id, op_name=f"{NS}.tool.{tc.tool_name}",
             started_at=tc.started_at, ended_at=at, output=tc.output, exception=tc.error,
-            attributes={NS: {"status": tc.status.value,
-                             "permission_decision": "allow", "permission_source": source}},
+            attributes={NS: {"status": tc.status.value, "permission_decision": "allow",
+                             "permission_source": "user" if prompted else "auto",
+                             "prompt_shown": prompted}},
         ))
 
     # ------- helpers -------
@@ -217,18 +217,6 @@ class Tracer:
             if t.tool_calls[k].status == ToolStatus.RUNNING:
                 return s, t.tool_calls[k]
         return s, None
-
-    def _close_permission(self, s, tc, decision, reason, at) -> None:
-        p = tc.permission
-        if not p:
-            return  # auto-approved: no permission span was opened
-        p.decision, p.reason = decision, reason
-        self.sink.end(WeaveCall(
-            id=p.call_id, trace_id=s.trace_id, op_name=f"{NS}.permission",
-            started_at=p.requested_at or at, ended_at=at,
-            output={"reason": reason} if reason else None,
-            attributes={NS: {"decision": decision.value}},
-        ))
 
     def _emit_steering(self, s, at, kind, text=None) -> None:
         t = s.current_turn

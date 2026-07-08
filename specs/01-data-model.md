@@ -72,8 +72,7 @@ class ToolCall:
     ended_at: float | None
 
 @dataclass
-class Permission:
-    call_id: str
+class Permission:                          # recorded on the ToolCall, not a span
     requested_at: float | None            # set if a PermissionRequest was seen
     decision: Decision                    # PENDING | ALLOW | DENY
     reason: str | None                    # denial_reason / feedback
@@ -125,8 +124,7 @@ class WeaveCall:
 | `weave_agent_adapter.session` | `Session` | — (root) |
 | `weave_agent_adapter.turn` | `Turn` | session |
 | `weave_agent_adapter.input` | `Turn.input_text` | turn |
-| `weave_agent_adapter.tool.<name>` | `ToolCall` | turn |
-| `weave_agent_adapter.permission` | `Permission` | tool |
+| `weave_agent_adapter.tool.<name>` | `ToolCall` (+ `Permission` as attrs) | turn |
 | `weave_agent_adapter.steering` | `Steering` | turn |
 | `weave_agent_adapter.stop` | `Turn` end | turn |
 
@@ -137,8 +135,7 @@ OTEL/Weave calls need start+end together, but hook events arrive separately. Rul
 ### Key attributes (illustrative; full schema in spec 06)
 
 - session: `permission_mode`, `cwd`, `turn_count`
-- tool: `tool_name`, `status`, `duration_s`
-- permission: `decision`, `reason`, `prompt_shown`
+- tool: `tool_name`, `status`, `duration_s`, `permission_decision`, `permission_source`, `prompt_shown`, `denial_reason`
 - steering: `kind`, `related_tool_key`
 
 ---

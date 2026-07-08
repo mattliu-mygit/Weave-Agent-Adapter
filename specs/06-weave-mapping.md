@@ -38,8 +38,7 @@ Each span (spec 01, layer C) becomes **two requests**: a `call_start` at open an
 | `weave_agent_adapter.session` | `{session_id}` | `{turn_count, status}` | attr: `harness, permission_mode, cwd` |
 | `weave_agent_adapter.turn` | — | `{status, tool_count, had_steering}` | attr: `index` |
 | `weave_agent_adapter.input` | `{prompt}` (redacted) | — | attr: `kind=input` |
-| `weave_agent_adapter.tool.<name>` | `{tool_name, tool_input}` (redacted) | `{...tool_output}` (redacted) or none | summary: `status, duration_s, permission_decision, permission_source` |
-| `weave_agent_adapter.permission` | `{tool_name}` | `{reason}` if denied | summary: `decision, prompt_shown` |
+| `weave_agent_adapter.tool.<name>` | `{tool_name, tool_input}` (redacted) | `{...tool_output}` (redacted) or none | summary: `status, duration_s, permission_decision, permission_source, prompt_shown, denial_reason` |
 | `weave_agent_adapter.steering` | `{text}` or `{input_diff}` | — | attr: `steering_kind, related_tool` |
 | `weave_agent_adapter.stop` | — | — | attr: `kind=stop` |
 
@@ -67,18 +66,13 @@ Each span (spec 01, layer C) becomes **two requests**: a `call_start` at open an
 }
 ```
 
-## Example: a rejected Edit + its permission child
+## Example: a rejected Edit
 
-Tool `call_end` (no output; not an exception — a decision):
+Permission is on the tool call, not a separate span — `call_end` carries the decision:
 ```json
 { "id": "c-ed1…", "ended_at": "2026-07-07T19:00:01.100Z", "output": null, "exception": null,
-  "summary": { "weave_agent_adapter": { "status": "rejected", "permission_decision": "deny", "permission_source": "user", "duration_s": 1.1 } } }
-```
-Permission `call_end`:
-```json
-{ "id": "c-perm1…", "ended_at": "2026-07-07T19:00:01.100Z",
-  "output": { "reason": "use the logger, not print" },
-  "summary": { "weave_agent_adapter": { "decision": "deny", "prompt_shown": true } } }
+  "summary": { "weave_agent_adapter": { "status": "rejected", "permission_decision": "deny",
+                                        "denial_reason": "use the logger, not print", "prompt_shown": true } } }
 ```
 
 ## Notes

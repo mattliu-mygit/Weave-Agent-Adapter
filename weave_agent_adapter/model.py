@@ -58,7 +58,6 @@ class WireEvent:
 
 @dataclass
 class Permission:
-    call_id: str
     requested_at: Optional[float] = None    # set if a PermissionRequest was seen
     decision: Decision = Decision.PENDING
     reason: Optional[str] = None            # denial_reason / feedback
