@@ -75,6 +75,12 @@ class Tracer:
         sid = fields.get("session_id")
         if not sid:
             return
+        # Resume/edit continue under a NEW session_id that never gets its own
+        # SessionStart; a sidecar restart also loses a live session. Auto-create
+        # the session from the first event we see for an unknown sid, so its
+        # turns/tools/subagents aren't silently dropped.
+        if canonical != "session_start" and sid not in self.sessions:
+            self._on_session_start(sid, fields, wire.captured_at)
         handler = getattr(self, f"_on_{canonical}", None)
         if handler:
             handler(sid, fields, wire.captured_at)

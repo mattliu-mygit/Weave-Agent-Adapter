@@ -178,6 +178,39 @@ def test_compaction_under_session_root():
     assert comp.attributes[NS]["trigger"] == "auto"
 
 
+def test_session_autocreated_without_session_start():
+    # resume/edit continue under a new session_id with no SessionStart; the turn
+    # and its tools must still be traced (auto-created session).
+    tr, sink = run([
+        ("UserPromptSubmit", {"session_id": "resumed", "prompt": "keep going", "cwd": "/repo"}),
+        ("PreToolUse", {"session_id": "resumed", "tool_name": "Bash", "tool_use_id": "t1"}),
+        ("PostToolUse", {"session_id": "resumed", "tool_name": "Bash", "tool_use_id": "t1",
+                         "tool_response": {"ok": 1}}),
+    ])
+    assert one(sink, f"{NS}.session")                      # session materialized
+    assert one(sink, f"{NS}.turn").inputs["prompt"] == "keep going"
+    assert one(sink, f"{NS}.tool.Bash")
+
+
+def test_subagent_interior_after_turn_stop_still_nests():
+    # subagents run async: SubagentStart + interior tools + SubagentStop can all
+    # arrive AFTER the turn's Stop. They must still nest under the subagent span.
+    tr, sink = run([
+        ("SessionStart", {"session_id": SID}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
+        ("SubagentStart", {"session_id": SID, "agent_id": "g1", "agent_type": "general-purpose"}),
+        ("Stop", {"session_id": SID}),                     # turn ends while subagent runs
+        ("PreToolUse", {"session_id": SID, "tool_name": "Bash", "tool_use_id": "i1",
+                        "agent_id": "g1", "agent_type": "general-purpose"}),
+        ("PostToolUse", {"session_id": SID, "tool_name": "Bash", "tool_use_id": "i1",
+                         "agent_id": "g1", "tool_response": {"ok": 1}}),
+        ("SubagentStop", {"session_id": SID, "agent_id": "g1", "agent_type": "general-purpose"}),
+    ])
+    agent = one(sink, f"{NS}.agent.general-purpose")
+    inner = one(sink, f"{NS}.tool.Bash")
+    assert inner.parent_id == agent.id                    # interior tool nests under subagent
+
+
 def test_turnless_session_emits_nothing():
     # a session opened and closed with no user prompt (background/quick-open) is dropped
     tr, sink = run([
