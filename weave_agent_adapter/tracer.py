@@ -4,7 +4,7 @@ Turns normalized hook events into a nested tree of `WeaveCall` start/end
 emissions on a `Sink`. Holds per-session state in memory; all harness-specific
 knowledge stays in the `Profile`. Canonical actions handled: session, turn,
 tool (pre/post/error), permission (request/denied), subagent (start/stop),
-compaction. A harness maps only the events it emits — missing ones degrade
+compaction. A harness maps only the events it emits, missing ones degrade
 gracefully (e.g. stop-only subagents annotate rather than span).
 
 Timing: every emission's time comes from the event's `captured_at`.
@@ -57,7 +57,7 @@ class Tracer:
     def handle(self, wire) -> None:
         canonical = self.profile.canonical_event(wire.event)
         if canonical is None:
-            return  # unmapped native event — ignore
+            return  # unmapped native event, ignore
         fields = self.profile.extract(wire.payload)
         sid = fields.get("session_id")
         if not sid:

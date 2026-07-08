@@ -80,7 +80,7 @@ def main() -> None:
     for r in records:
         by_event[r.get("event", "unknown")].append(r)
 
-    print(f"# Capture report — {len(records)} events, {len(by_event)} types")
+    print(f"# Capture report, {len(records)} events, {len(by_event)} types")
     print(f"# dir: {capture_dir}\n")
 
     # 1. Per-event payload schema
@@ -95,7 +95,7 @@ def main() -> None:
             print(f"    {k}")
         print()
 
-    # 2. Tool-call correlation — the key M0 question
+    # 2. Tool-call correlation, the key M0 question
     print("## Tool-call correlation\n")
     id_fields: dict[str, dict[str, set]] = defaultdict(lambda: defaultdict(set))
     for r in records:
@@ -112,7 +112,7 @@ def main() -> None:
     else:
         # A per-call key varies per tool call: many distinct values, each
         # appearing in both Pre and Post. A constant like session_id is shared
-        # but has a single value across all calls — not a correlation key.
+        # but has a single value across all calls, not a correlation key.
         for field in sorted(id_fields):
             evs = id_fields[field]
             pre = evs.get("PreToolUse", set())
@@ -121,7 +121,7 @@ def main() -> None:
             if pre and post and len(shared) > 1:
                 tag = f"  <- PER-CALL KEY ✓ ({len(shared)} distinct values shared Pre/Post)"
             elif pre and post and len(shared) == 1:
-                tag = "  (single shared value — constant per session, not per-call)"
+                tag = "  (single shared value, constant per session, not per-call)"
             elif pre and post:
                 tag = "  (on both, but no shared values)"
             else:

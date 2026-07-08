@@ -1,4 +1,4 @@
-# Spec 01 — Data model
+# Spec 01: Data model
 
 Three layers: **(A)** the wire event a hook sends the sidecar, **(B)** the sidecar's in-memory state, **(C)** the Weave call each span becomes. Ties to spec 03 (wire), spec 05 (correlation), spec 06 (weave-mapping).
 
@@ -20,15 +20,15 @@ class WireEvent:
 ```
 
 - One newline-delimited JSON object per event (see spec 03).
-- The hook **parses nothing**: `harness`/`event` come from its launch args, `payload` is forwarded raw. The sidecar extracts `session_id`, `tool_name`, etc. via the profile's `[fields]` (spec 02) — so the hook needs no harness-specific field knowledge.
-- `captured_at` is stamped in the hook, not the sidecar — so queued/detached delivery doesn't skew span times.
+- The hook **parses nothing**: `harness`/`event` come from its launch args, `payload` is forwarded raw. The sidecar extracts `session_id`, `tool_name`, etc. via the profile's `[fields]` (spec 02), so the hook needs no harness-specific field knowledge.
+- `captured_at` is stamped in the hook, not the sidecar, so queued/detached delivery doesn't skew span times.
 - Redaction happens in the **sidecar** before the call is sent to Weave, not here (keeps hooks trivial; see spec 07).
 
 ---
 
 ## B. Sidecar in-memory state
 
-Held by the `Tracer` as `dict[session_id → Session]` — no wrapper class.
+Held by the `Tracer` as `dict[session_id → Session]`, no wrapper class.
 
 ```python
 @dataclass
@@ -121,7 +121,7 @@ class WeaveCall:
 
 | Span (`op_name`) | Built from | Parent |
 |---|---|---|
-| `weave_agent_adapter.session` | `Session` | — (root) |
+| `weave_agent_adapter.session` | `Session` |   (root) |
 | `weave_agent_adapter.turn` | `Turn` | session |
 | `weave_agent_adapter.input` | `Turn.input_text` | turn |
 | `weave_agent_adapter.tool.<name>` | `ToolCall` (+ `Permission` as attrs) | turn |
@@ -130,7 +130,7 @@ class WeaveCall:
 
 ### Timing rule
 
-OTEL/Weave calls need start+end together, but hook events arrive separately. Rule: **stash `started_at` + ids at open; emit the call (`call_start` then `call_end`) at close**, using stored start + close `captured_at`. Long-open calls (session, turn) may `call_start` early so the UI shows them live — decided in spec 06.
+OTEL/Weave calls need start+end together, but hook events arrive separately. Rule: **stash `started_at` + ids at open; emit the call (`call_start` then `call_end`) at close**, using stored start + close `captured_at`. Long-open calls (session, turn) may `call_start` early so the UI shows them live, decided in spec 06.
 
 ### Key attributes (illustrative; full schema in spec 06)
 
@@ -144,5 +144,5 @@ OTEL/Weave calls need start+end together, but hook events arrive separately. Rul
 
 - **trace_id:** generated at `SessionStart`, one per session, lives in `Session`.
 - **call ids:** generated per span at open.
-- **correlation_key:** how Pre/Permission/Post find the same `ToolCall` — resolution chain in spec 05; the **OPEN** question (is a stable `tool_use_id` in the payload?) is answered by M0 capture.
-- State is a **cache**, fully reconstructible from `transcript_path` — so sidecar crashes are recoverable (see spec 04).
+- **correlation_key:** how Pre/Permission/Post find the same `ToolCall`, resolution chain in spec 05; the **OPEN** question (is a stable `tool_use_id` in the payload?) is answered by M0 capture.
+- State is a **cache**, fully reconstructible from `transcript_path`, so sidecar crashes are recoverable (see spec 04).

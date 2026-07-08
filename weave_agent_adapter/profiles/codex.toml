@@ -1,6 +1,6 @@
 # Harness profile: OpenAI Codex CLI. See specs/02-harness-profiles.md.
 # Codex's hook system mirrors Claude Code's (stdin JSON, tool_use_id correlation),
-# so this is a profile-only integration — no code. Field paths per the Codex
+# so this is a profile-only integration, no code. Field paths per the Codex
 # hooks docs (https://developers.openai.com/codex/hooks).
 #
 # Notable differences from Claude Code, handled by graceful degradation:

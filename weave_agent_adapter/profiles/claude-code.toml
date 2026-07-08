@@ -1,6 +1,6 @@
 # Harness profile: Claude Code. See specs/02-harness-profiles.md.
 # Field paths verified against a real Claude Code 2.1.201 capture (M0), except
-# PermissionRequest/PermissionDenied (bypassed in headless — still provisional).
+# PermissionRequest/PermissionDenied (bypassed in headless, still provisional).
 
 [harness]
 name      = "claude-code"
@@ -33,8 +33,8 @@ cwd                = "cwd"
 agent_id           = "agent_id"            # set on SubagentStop + subagent-interior tools
 agent_type         = "agent_type"          # SubagentStop, e.g. "Explore"
 agent_output       = "last_assistant_message"   # SubagentStop
-denial_reason      = "denial_reason"       # PermissionDenied (provisional — not yet captured)
-compaction_trigger = "trigger"             # PreCompact (provisional — not yet captured)
+denial_reason      = "denial_reason"       # PermissionDenied (provisional, not yet captured)
+compaction_trigger = "trigger"             # PreCompact (provisional, not yet captured)
 
 [registration]
 kind    = "claude-code-settings"

@@ -1,4 +1,4 @@
-# Example weave-agent-adapter config — read by the sidecar (env > this file > defaults).
+# Example weave-agent-adapter config, read by the sidecar (env > this file > defaults).
 # Copy to ~/.weave-agent-adapter/config.toml and edit. The hook needs no config.
 
 active_harness = "claude-code"        # -> weave_agent_adapter/profiles/<name>.toml
@@ -6,7 +6,7 @@ active_harness = "claude-code"        # -> weave_agent_adapter/profiles/<name>.t
 [weave]
 entity  = "your-entity"
 project = "claude-code"
-# WANDB_API_KEY is read from the environment — never put secrets in this file.
+# WANDB_API_KEY is read from the environment, never put secrets in this file.
 enable_disk_fallback = true            # dead-letter log for sends that fail after retries (WEAVE_ENABLE_DISK_FALLBACK)
 
 [redaction]

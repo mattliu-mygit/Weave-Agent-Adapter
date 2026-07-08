@@ -2,7 +2,7 @@
 
 Pure dataclasses + enums: the wire event (layer A), the sidecar's in-memory
 state (layer B), and the Weave call each span becomes (layer C). No behavior
-here — just the shapes the rest of the sidecar builds on.
+here, just the shapes the rest of the sidecar builds on.
 """
 from __future__ import annotations
 

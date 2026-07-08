@@ -4,7 +4,7 @@ Uses the low-level `call_start` / `call_end` trace-server API rather than the
 `create_call` decorator path, because that's the only surface that accepts
 **explicit timestamps** (`started_at`/`ended_at`) and **explicit ids**
 (`id`/`trace_id`/`parent_id`). Our spans are reconstructed out-of-process, so we
-must supply our own ids and our hook-stamped `captured_at` — otherwise Weave
+must supply our own ids and our hook-stamped `captured_at`, otherwise Weave
 would stamp wall-clock at ingest time and the durations would be wrong.
 
 Delivery still goes through the client's async batch processor (`client.server`),
@@ -27,7 +27,7 @@ def _dt(ts: float) -> datetime.datetime:
 class WeaveSink(Sink):
     def __init__(self, project: str):
         # we trace via the low-level call API, not @weave.op, so integration
-        # autopatching is pure init cost — turn it off.
+        # autopatching is pure init cost, turn it off.
         os.environ.setdefault("WEAVE_IMPLICITLY_PATCH_INTEGRATIONS", "false")
         import weave
         from weave.trace_server import trace_server_interface as tsi

@@ -1,4 +1,4 @@
-"""Second harness (Codex) — proves the adapter is profile-only: no code path is
+"""Second harness (Codex), proves the adapter is profile-only: no code path is
 Claude-specific. Codex adds SubagentStart (real subagent span) and has no
 SessionEnd (sessions close via the sweep)."""
 from __future__ import annotations

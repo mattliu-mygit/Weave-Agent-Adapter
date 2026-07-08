@@ -1,7 +1,7 @@
 """Harness profile loader (spec 02).
 
 Loads a declarative profile (TOML) and turns raw harness payloads into
-canonical events + fields — so the sidecar holds no harness-specific
+canonical events + fields, so the sidecar holds no harness-specific
 knowledge. Field extraction resolves dotted paths (e.g. "tool_input.command").
 """
 from __future__ import annotations

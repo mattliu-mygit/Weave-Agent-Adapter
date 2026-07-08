@@ -1,6 +1,6 @@
 # weave-agent-adapter
 
-Trace agent-harness sessions to [Weights & Biases Weave](https://wandb.ai/site/weave) as a nested trace you can inspect, filter, and analyze. Two harnesses ship as profiles: [Claude Code](https://docs.claude.com/en/docs/claude-code) and [Codex](https://developers.openai.com/codex). Any harness with a hook system can be added with a profile and no code (see [Bring your own harness](#bring-your-own-harness)).
+Trace agent-harness sessions to [Weights & Biases Weave](https://wandb.ai/site/weave) as a nested trace you can inspect, filter, and analyze. Two harnesses ship as profiles: [Claude Code](https://docs.claude.com/en/docs/claude-code) and [Codex](https://developers.openai.com/codex). Any harness (open source, closed source, personal, etc.) with a hook-like system can be added with a profile and no code (see [Bring your own harness](#bring-your-own-harness)).
 
 ## What it captures
 
@@ -100,8 +100,6 @@ events  = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Sto
 Map only the events your harness emits. Missing ones degrade gracefully: a harness with no session-end event closes sessions via the idle sweep, and one with no pre-tool event synthesizes the span from the completion.
 
 `kind` selects where `install` writes the hook registration. Two targets ship: `claude-code-settings` (`~/.claude/settings.json`) and `codex-hooks` (`~/.codex/hooks.json`). If your harness reads one of those formats, reuse its kind; otherwise add one line to the target map in `install.py`, or skip `install` and wire the printed per-event command into your harness by hand.
-
-See [spec 02](specs/02-harness-profiles.md) for the full contract and [examples/](examples/) for copy-pasteable config.
 
 ## License
 

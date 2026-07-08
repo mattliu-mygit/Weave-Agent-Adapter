@@ -1,4 +1,4 @@
-# Spec 06 — What we send to Weave
+# Spec 06: What we send to Weave
 
 Each span (spec 01, layer C) becomes **two requests**: a `call_start` at open and a `call_end` at close, both through the SDK (`create_call` / `finish_call`) in the sidecar. All `inputs`/`output` pass through redaction (spec 07) first.
 
@@ -36,11 +36,11 @@ Each span (spec 01, layer C) becomes **two requests**: a `call_start` at open an
 | op_name | inputs | output | key attributes / summary |
 |---|---|---|---|
 | `weave_agent_adapter.session` | `{session_id}` | `{turn_count, status}` | attr: `harness, permission_mode, cwd` |
-| `weave_agent_adapter.turn` | — | `{status, tool_count, had_steering}` | attr: `index` |
-| `weave_agent_adapter.input` | `{prompt}` (redacted) | — | attr: `kind=input` |
+| `weave_agent_adapter.turn` |   | `{status, tool_count, had_steering}` | attr: `index` |
+| `weave_agent_adapter.input` | `{prompt}` (redacted) |   | attr: `kind=input` |
 | `weave_agent_adapter.tool.<name>` | `{tool_name, tool_input}` (redacted) | `{...tool_output}` (redacted) or none | summary: `status, duration_s, permission_decision, permission_source, prompt_shown, denial_reason` |
-| `weave_agent_adapter.steering` | `{text}` or `{input_diff}` | — | attr: `steering_kind, related_tool` |
-| `weave_agent_adapter.stop` | — | — | attr: `kind=stop` |
+| `weave_agent_adapter.steering` | `{text}` or `{input_diff}` |   | attr: `steering_kind, related_tool` |
+| `weave_agent_adapter.stop` |   |   | attr: `kind=stop` |
 
 ## Example: an approved Bash tool call
 
@@ -68,7 +68,7 @@ Each span (spec 01, layer C) becomes **two requests**: a `call_start` at open an
 
 ## Example: a rejected Edit
 
-Permission is on the tool call, not a separate span — `call_end` carries the decision:
+Permission is on the tool call, not a separate span, `call_end` carries the decision:
 ```json
 { "id": "c-ed1…", "ended_at": "2026-07-07T19:00:01.100Z", "output": null, "exception": null,
   "summary": { "weave_agent_adapter": { "status": "rejected", "permission_decision": "deny",
@@ -77,7 +77,7 @@ Permission is on the tool call, not a separate span — `call_end` carries the d
 
 ## Notes
 
-- **Harness-agnostic namespace:** op names use the tracer namespace `weave_agent_adapter.*` (not the harness's), and the active harness is recorded as the `harness` attribute — so traces from different harnesses share one schema.
+- **Harness-agnostic namespace:** op names use the tracer namespace `weave_agent_adapter.*` (not the harness's), and the active harness is recorded as the `harness` attribute, so traces from different harnesses share one schema.
 - **Redaction** (spec 07): `tool_input`, `tool_output`, and `prompt` are scrubbed before appearing in `inputs`/`output`.
 - **Timing rule** (spec 01): long-open spans (session, turn) may `call_start` early so the UI shows them live; short spans emit start+end together at close.
-- **OPEN:** exact `tool_output` shape per tool (Bash vs Edit vs Read …) and whether a tool-call id is present — confirmed by M0 capture.
+- **OPEN:** exact `tool_output` shape per tool (Bash vs Edit vs Read …) and whether a tool-call id is present, confirmed by M0 capture.

@@ -45,7 +45,7 @@ def _ensure_sidecar() -> None:
     if _sidecar_up():
         return
     # detached; the singleton flock means only one survives if several race.
-    # No args — the sidecar loads its own config (project, redaction, idle).
+    # No args, the sidecar loads its own config (project, redaction, idle).
     subprocess.Popen(
         [sys.executable, "-m", "weave_agent_adapter", "sidecar"],
         start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

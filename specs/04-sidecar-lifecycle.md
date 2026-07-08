@@ -1,4 +1,4 @@
-# Spec 04 — Sidecar lifecycle
+# Spec 04: Sidecar lifecycle
 
 One long-lived process per machine, hosting the warm Weave client (spec 01, layer B). Lazy-spawned, singleton, self-terminating.
 
@@ -9,7 +9,7 @@ Any hook that can't reach the socket may spawn it; in practice the session-start
 1. Try to `connect` the socket. Success → send + exit.
 2. Refused → acquire an exclusive `flock` on `~/.weave-agent-adapter/sidecar.lock`.
    - **Won the lock:** double-fork + `setsid` to detach, `exec` the sidecar, poll until the socket accepts (bounded ~2 s), release lock, then send.
-   - **Lost the lock:** another hook is spawning — poll-connect with backoff; if still down past the deadline, spool (spec 03) and exit.
+   - **Lost the lock:** another hook is spawning, poll-connect with backoff; if still down past the deadline, spool (spec 03) and exit.
 
 Binding the fixed socket path is itself mutually exclusive, so at most one sidecar ever runs. The lock only avoids a thundering herd of spawns.
 
@@ -27,12 +27,12 @@ Timer-driven. Exit when **no active sessions** AND the queue is drained, for `si
 
 State is an in-memory cache; a crash loses in-flight session state, which is acceptable for v1:
 
-- Delivery is best-effort: the SDK batches and retries sends (`retry_max_attempts=3`); items that still fail are appended to a disk dead-letter log (`WEAVE_ENABLE_DISK_FALLBACK`, on by default). This is *not* a replay-on-restart WAL — the log is not automatically re-sent.
-- Open calls from a *hard* crash of the sidecar itself (SIGKILL, power loss) are left open in Weave — no external finalize layer in v1.
+- Delivery is best-effort: the SDK batches and retries sends (`retry_max_attempts=3`); items that still fail are appended to a disk dead-letter log (`WEAVE_ENABLE_DISK_FALLBACK`, on by default). This is *not* a replay-on-restart WAL, the log is not automatically re-sent.
+- Open calls from a *hard* crash of the sidecar itself (SIGKILL, power loss) are left open in Weave, no external finalize layer in v1.
 
 ## Periodic sweep
 
-While running, a timer (`sweep_interval`, ~30s) finalizes sessions idle beyond `session_ttl_s` (no `SessionEnd` arrived — e.g. the harness was killed): it closes the turn + session at `last_activity`, tags the session `incomplete`, and drops the state so memory can't grow without bound.
+While running, a timer (`sweep_interval`, ~30s) finalizes sessions idle beyond `session_ttl_s` (no `SessionEnd` arrived, e.g. the harness was killed): it closes the turn + session at `last_activity`, tags the session `incomplete`, and drops the state so memory can't grow without bound.
 
 ## Signals
 
@@ -40,4 +40,4 @@ While running, a timer (`sweep_interval`, ~30s) finalizes sessions idle beyond `
 
 ## OPEN
 
-- Exact TTLs (idle-shutdown vs. idle-session drop) — tune after real runs.
+- Exact TTLs (idle-shutdown vs. idle-session drop), tune after real runs.

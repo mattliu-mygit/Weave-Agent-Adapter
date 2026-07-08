@@ -1,4 +1,4 @@
-"""weave-agent-adapter hook — capture mode (M0).
+"""weave-agent-adapter hook, capture mode (M0).
 
 Wired to every harness hook event; writes each raw event to disk so we can
 confirm payload schemas and tool-call correlation before building the tracer.

@@ -1,6 +1,6 @@
-# Spec 03 — Hook → sidecar: dispatcher & wire protocol
+# Spec 03: Hook → sidecar: dispatcher & wire protocol
 
-The single command wired to every event, and how it hands the event to the sidecar. This is the **`command-hook` adapter** (spec 02) — it serves any harness whose hooks invoke a command. The hook is dumb: it forwards the raw payload and lets the sidecar normalize via the profile (spec 02).
+The single command wired to every event, and how it hands the event to the sidecar. This is the **`command-hook` adapter** (spec 02), it serves any harness whose hooks invoke a command. The hook is dumb: it forwards the raw payload and lets the sidecar normalize via the profile (spec 02).
 
 It reads the payload per the profile's `transport`: `stdin-json` (default, below) reads JSON on stdin; `argv`/`env`/`file` read fields from args, environment, or a passed path instead. Everything downstream is identical.
 
@@ -10,21 +10,21 @@ It reads the payload per the profile's `transport`: `stdin-json` (default, below
 weave-agent-adapter hook --harness NAME --event NAME
 ```
 
-Both args come from the profile's `[registration]` (spec 02) — so the hook never parses the payload to learn its harness or event. The same static command backs every event.
+Both args come from the profile's `[registration]` (spec 02), so the hook never parses the payload to learn its harness or event. The same static command backs every event.
 
 ## What the hook does
 
-1. Read stdin, bounded (0.5 s cap — never hang a turn).
-2. Wrap it as a `WireEvent` (spec 01): `{v, harness, event, captured_at, pid, payload}` — `payload` is the raw stdin verbatim; `captured_at` is stamped here (authoritative timing).
+1. Read stdin, bounded (0.5 s cap, never hang a turn).
+2. Wrap it as a `WireEvent` (spec 01): `{v, harness, event, captured_at, pid, payload}`, `payload` is the raw stdin verbatim; `captured_at` is stamped here (authoritative timing).
 3. **Session-start event only:** ensure the sidecar is up (spec 04).
 4. Send to the sidecar socket; on failure, best-effort spool.
 5. Exit 0.
 
-It parses **nothing** out of the payload — `session_id`, `tool_name`, etc. are extracted by the sidecar via the profile's `[fields]`.
+It parses **nothing** out of the payload, `session_id`, `tool_name`, etc. are extracted by the sidecar via the profile's `[fields]`.
 
 ## Invariants (runs on every tool call)
 
-- **Never block:** bounded stdin read, bounded socket write, no synchronous network. The hook never calls Weave — deferral is the sidecar's job (spec 04).
+- **Never block:** bounded stdin read, bounded socket write, no synchronous network. The hook never calls Weave, deferral is the sidecar's job (spec 04).
 - **Never break:** catch-all → always `exit 0`.
 - **Never decide:** stdout left empty. We're a passive observer; even on `PreToolUse` we never emit a `permissionDecision`.
 
@@ -35,7 +35,7 @@ It parses **nothing** out of the payload — `session_id`, `tool_name`, etc. are
 
 ## Framing
 
-Newline-delimited JSON — one `WireEvent` per line. The hook `connect → write one line → close`; it does not wait for a reply (fire-and-forget).
+Newline-delimited JSON, one `WireEvent` per line. The hook `connect → write one line → close`; it does not wait for a reply (fire-and-forget).
 
 ```json
 {"v":1,"harness":"claude-code","event":"PreToolUse","captured_at":1751914800.12,"pid":41234,"payload":{ ...raw hook stdin... }}
@@ -45,7 +45,7 @@ Newline-delimited JSON — one `WireEvent` per line. The hook `connect → write
 
 - The **session-start hook waits** until the socket is accepting before returning (spec 04), so later hooks in the session find the sidecar up.
 - If a connect/write still fails (e.g. sidecar crashed mid-session) → swallow, exit 0. v1 is best-effort: dropping the occasional event is acceptable.
-- **Optional thin spool** (`~/.weave-agent-adapter/spool/<session>.jsonl`) drained by the sidecar on next contact (idempotent by span id). Kept minimal — not a durability layer.
+- **Optional thin spool** (`~/.weave-agent-adapter/spool/<session>.jsonl`) drained by the sidecar on next contact (idempotent by span id). Kept minimal, not a durability layer.
 
 ## Versioning
 

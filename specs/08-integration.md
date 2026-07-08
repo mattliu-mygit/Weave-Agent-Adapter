@@ -1,12 +1,12 @@
-# Spec 08 — Integration & packaging
+# Spec 08: Integration & packaging
 
-Goal: adopters write **zero** lines. Everything derives from the active profile's `[registration]` (spec 02). Kept light on purpose — detail lands at M5.
+Goal: adopters write **zero** lines. Everything derives from the active profile's `[registration]` (spec 02). Kept light on purpose, detail lands at M5.
 
 ## Delivery ladder (least → most effort)
 
-1. **Plugin** — ships a generated `hooks/hooks.json`; install → done. 0 authored lines. The floor.
-2. **`weave-agent-adapter install [--user|--project]`** — patches the harness config from the profile's `[registration]`; idempotent, `uninstall` removes only our entries.
-3. **Manual** — paste the generated block.
+1. **Plugin**, ships a generated `hooks/hooks.json`; install → done. 0 authored lines. The floor.
+2. **`weave-agent-adapter install [--user|--project]`**, patches the harness config from the profile's `[registration]`; idempotent, `uninstall` removes only our entries.
+3. **Manual**, paste the generated block.
 
 ## CLI
 

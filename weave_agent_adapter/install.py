@@ -1,7 +1,7 @@
 """Installer (spec 08): wire a harness's hooks from the profile's [registration].
 
 Reads the active profile, emits one command per event, and merges them into the
-harness's settings file — idempotently (re-running replaces our entries;
+harness's settings file, idempotently (re-running replaces our entries;
 `uninstall` removes only ours). Currently supports the `claude-code-settings`
 registration kind; other kinds slot in here as harnesses are added.
 """
@@ -76,7 +76,7 @@ def write_plugin(harness: str, dest: str, profiles_dir=None) -> str:
     """Emit a Claude Code plugin dir (manifest + hooks.json) for zero-config install.
 
     Same per-event commands as `install`, but packaged so a user adds the plugin
-    once instead of editing settings.json — the hooks auto-register on load.
+    once instead of editing settings.json, the hooks auto-register on load.
     """
     command, events, _ = _registration(harness, profiles_dir)
     manifest = {

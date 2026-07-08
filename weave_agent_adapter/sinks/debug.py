@@ -1,4 +1,4 @@
-"""File sink: writes the finished trace tree on flush — local inspection, no Weave."""
+"""File sink: writes the finished trace tree on flush, local inspection, no Weave."""
 from __future__ import annotations
 
 from .recording import RecordingSink
