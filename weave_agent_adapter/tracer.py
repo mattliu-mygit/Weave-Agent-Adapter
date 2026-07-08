@@ -106,22 +106,22 @@ class Tracer:
         # agents, resumes, quick opens) we don't want cluttering the dashboard.
 
     def _thread_of(self, s: Session) -> Optional[str]:
-        # the conversation's root message uuid (parentUuid=None) is copied verbatim
-        # into every resume/edit, so it's a fork-stable thread id. Read it once from
-        # the transcript, streaming and stopping at the root row (near the top).
+        # the uuid of the conversation's first message is copied verbatim into every
+        # resume/edit, so it's a fork-stable thread id. Read it once from the
+        # transcript: the first non-sidechain row that carries a uuid (the leading
+        # rows are metadata like titles/queue ops with no uuid). Streamed + capped.
         if s.thread_id is not None or not s.transcript:
             return s.thread_id
         try:
             with open(s.transcript) as fh:
                 for i, line in enumerate(fh):
-                    if i >= 100:                  # bound the scan; root is at the top
+                    if i >= 50:                   # bound the scan; the first message is at the top
                         break
                     line = line.strip()
                     if not line:
                         continue
                     r = json.loads(line)
-                    if (r.get("type") == "user" and not r.get("isSidechain")
-                            and r.get("parentUuid") is None):
+                    if not r.get("isSidechain") and r.get("uuid"):
                         s.thread_id = r.get("uuid")
                         break
         except Exception:
