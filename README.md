@@ -1,8 +1,8 @@
 # weave-agent-adapter
 
-Trace agent-harness sessions to [Weights & Biases Weave](https://wandb.ai/site/weave) — as a nested trace you can inspect, filter, and analyze. [Claude Code](https://docs.claude.com/en/docs/claude-code) is the first supported harness.
+Trace agent-harness sessions to [Weights & Biases Weave](https://wandb.ai/site/weave) — as a nested trace you can inspect, filter, and analyze. Two harnesses ship as profiles: [Claude Code](https://docs.claude.com/en/docs/claude-code) and [Codex](https://developers.openai.com/codex).
 
-> **Status:** early development. Design is settled; the `M0` capture hook is written (inspector + real-session confirmation still pending). Not yet installable.
+> **Status:** M0–M5 implemented and tested (27-test suite). Claude Code payloads verified against a real capture. Installable from source (`pip install -e .` + `weave-agent-adapter install`); not yet published to PyPI.
 
 ## What it captures
 

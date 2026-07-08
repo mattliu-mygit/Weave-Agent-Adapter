@@ -14,11 +14,19 @@ from .profile import load_profile
 
 MARKER = "weave-agent-adapter hook"      # identifies entries we own
 
+# registration kind -> (user-scope path, project-scope path). Both files use the
+# same {"hooks": {event: [entry]}} shape, so one merge covers every harness.
+_TARGETS = {
+    "claude-code-settings": ("~/.claude/settings.json", ".claude/settings.json"),
+    "codex-hooks":          ("~/.codex/hooks.json",     ".codex/hooks.json"),
+}
 
-def _settings_path(user: bool) -> str:
-    if user:
-        return os.path.expanduser("~/.claude/settings.json")
-    return os.path.join(os.getcwd(), ".claude", "settings.json")
+
+def _settings_path(kind: str, user: bool) -> str:
+    if kind not in _TARGETS:
+        raise ValueError(f"unsupported registration kind: {kind!r}")
+    user_path, local_path = _TARGETS[kind]
+    return os.path.expanduser(user_path) if user else os.path.join(os.getcwd(), local_path)
 
 
 def _read_json(path: str) -> dict:
@@ -48,14 +56,12 @@ def _entry(command: str, ev: str) -> dict:
 
 def _registration(harness: str, profiles_dir=None):
     reg = load_profile(harness, profiles_dir).registration
-    if reg.get("kind") != "claude-code-settings":
-        raise ValueError(f"unsupported registration kind: {reg.get('kind')!r}")
-    return reg["command"], reg.get("events", [])
+    return reg["command"], reg.get("events", []), reg.get("kind")
 
 
 def install(harness: str, user: bool = True, profiles_dir=None, path=None) -> str:
-    command, events = _registration(harness, profiles_dir)
-    path = path or _settings_path(user)
+    command, events, kind = _registration(harness, profiles_dir)
+    path = path or _settings_path(kind, user)
     data = _read_json(path)
     hooks = data.setdefault("hooks", {})
     for ev in events:
@@ -72,7 +78,7 @@ def write_plugin(harness: str, dest: str, profiles_dir=None) -> str:
     Same per-event commands as `install`, but packaged so a user adds the plugin
     once instead of editing settings.json — the hooks auto-register on load.
     """
-    command, events = _registration(harness, profiles_dir)
+    command, events, _ = _registration(harness, profiles_dir)
     manifest = {
         "name": "weave-agent-adapter",
         "description": "Trace agent-harness sessions to W&B Weave (session/turn/tool/permission).",
@@ -85,7 +91,8 @@ def write_plugin(harness: str, dest: str, profiles_dir=None) -> str:
 
 
 def uninstall(harness: str, user: bool = True, profiles_dir=None, path=None) -> str:
-    path = path or _settings_path(user)
+    _, _, kind = _registration(harness, profiles_dir)
+    path = path or _settings_path(kind, user)
     data = _read_json(path)
     hooks = data.get("hooks", {})
     for ev in list(hooks.keys()):

@@ -7,7 +7,7 @@
 - **Normal Weave usage.** `weave.init()` once, warm client for the session → async batching, retry, and native call rendering come from the SDK; redaction and sampling are ours (see §9).
 - **Non-intrusive.** The harness is never modified. Hooks are external one-line commands (plugin auto-registers; 0 authored lines). The sidecar is a separate process beside the harness, not inside it.
 - **Never block, never break.** Hooks do a µs local write and exit 0; all failure swallowed.
-- **Harness-agnostic.** The core runs on a fixed set of **canonical actions**; each harness plugs in via an **adapter** (its hook mechanism) + a declarative **profile** (its event/field/registration mapping) — [spec 02](specs/02-harness-profiles.md). Assumes the harness has a hook (or hook-like) system. Command-based hooks reuse one adapter, so most harnesses are profile-only, no code. Claude Code is the first; event names below reflect it.
+- **Harness-agnostic.** The core runs on a fixed set of **canonical actions**; each harness plugs in via an **adapter** (its hook mechanism) + a declarative **profile** (its event/field/registration mapping) — [spec 02](specs/02-harness-profiles.md). Assumes the harness has a hook (or hook-like) system. Command-based hooks reuse one adapter, so most harnesses are profile-only, no code. Two profiles ship — Claude Code and **Codex** (`profiles/codex.toml`); Codex was added with *zero* code changes (it even exercises handlers Claude Code doesn't, like `SubagentStart`), which is the concrete proof of the claim. Event names below reflect the Claude Code profile.
 
 ## 2. Architecture
 

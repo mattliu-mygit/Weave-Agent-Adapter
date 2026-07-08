@@ -9,16 +9,16 @@ from weave_agent_adapter.tracer import Tracer
 NS = "weave_agent_adapter"
 
 
-def run(events, session_rate=1.0, redactor=None, t0=1000.0):
-    """Feed (native_event, payload) pairs through a claude-code tracer.
+def run(events, session_rate=1.0, redactor=None, t0=1000.0, harness="claude-code"):
+    """Feed (native_event, payload) pairs through a tracer for `harness`.
 
     Each event is stamped one second after the last, so durations are stable.
     Returns (tracer, sink).
     """
-    tr = Tracer(load_profile("claude-code"), "e/p", RecordingSink(),
+    tr = Tracer(load_profile(harness), "e/p", RecordingSink(),
                 redactor=redactor, session_rate=session_rate)
     for i, (name, payload) in enumerate(events):
-        tr.handle(WireEvent(v=1, harness="claude-code", event=name,
+        tr.handle(WireEvent(v=1, harness=harness, event=name,
                             captured_at=t0 + i, payload=payload, pid=1))
     return tr, tr.sink
 

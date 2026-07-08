@@ -1,0 +1,50 @@
+# Harness profile: OpenAI Codex CLI. See specs/02-harness-profiles.md.
+# Codex's hook system mirrors Claude Code's (stdin JSON, tool_use_id correlation),
+# so this is a profile-only integration — no code. Field paths per the Codex
+# hooks docs (https://developers.openai.com/codex/hooks).
+#
+# Notable differences from Claude Code, handled by graceful degradation:
+#   - No SessionEnd event -> sessions close via the sidecar's idle sweep.
+#   - No PermissionDenied event -> a denied tool (hook exit 2) simply has no
+#     PostToolUse; it closes via the sweep rather than as an explicit rejection.
+#   - Has SubagentStart (Claude Code doesn't), so subagents get a real
+#     open/close span instead of a stop-only annotation.
+
+[harness]
+name      = "codex"
+adapter   = "command-hook"
+transport = "stdin-json"
+
+[events]
+SessionStart      = "session_start"
+UserPromptSubmit  = "turn_start"
+PreToolUse        = "tool_pre"
+PostToolUse       = "tool_post"
+PermissionRequest = "permission_request"
+SubagentStart     = "subagent_start"
+SubagentStop      = "subagent_stop"
+PreCompact        = "compaction"
+Stop              = "turn_end"
+
+[fields]
+session_id         = "session_id"
+tool_name          = "tool_name"
+tool_input         = "tool_input"
+tool_output        = "tool_response"
+tool_use_id        = "tool_use_id"
+transcript         = "transcript_path"
+permission_mode    = "permission_mode"
+cwd                = "cwd"
+prompt             = "prompt"               # UserPromptSubmit (provisional)
+agent_id           = "agent_id"
+agent_type         = "agent_type"
+agent_output       = "last_assistant_message"   # SubagentStop
+compaction_trigger = "trigger"              # PreCompact (provisional)
+
+[registration]
+kind    = "codex-hooks"                      # writes ~/.codex/hooks.json
+command = "weave-agent-adapter hook --harness codex"   # installer appends --event <event>
+events  = [
+  "SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest",
+  "PostToolUse", "SubagentStart", "SubagentStop", "PreCompact", "Stop",
+]
