@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import datetime
 
-from .model import WeaveCall
-from .sink import Sink
+from ..core.model import WeaveCall
+from ..core.sink import Sink
 
 
 def _dt(ts: float) -> datetime.datetime:

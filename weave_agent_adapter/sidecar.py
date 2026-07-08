@@ -14,7 +14,7 @@ import socket
 import threading
 import time
 
-from .model import WireEvent
+from .core.model import WireEvent
 from .profile import load_profile
 from .tracer import Tracer
 

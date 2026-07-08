@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import uuid
 
-from .model import (
+from .core.model import (
     Decision, Permission, Session, SessionStatus, Steering,
     SteeringKind, ToolCall, ToolStatus, Turn, TurnStatus, WeaveCall,
 )
+from .core.sink import Sink
 from .profile import Profile
-from .sink import Sink
 
 NS = "weave_agent_adapter"
 

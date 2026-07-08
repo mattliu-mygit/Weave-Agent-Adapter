@@ -1,41 +1,10 @@
-"""Trace sinks (spec 06 boundary).
-
-A Sink receives `WeaveCall` start/end emissions from the tracer. `WeaveSink`
-(in weave_sink.py) logs to Weave; `RecordingSink` collects in memory for tests;
-`DebugSink` writes the tree to a file for local inspection without Weave.
-"""
+"""File sink: writes the finished trace tree on flush — local inspection, no Weave."""
 from __future__ import annotations
 
-from .model import WeaveCall
-
-
-class Sink:
-    def start(self, call: WeaveCall) -> None:
-        raise NotImplementedError
-
-    def end(self, call: WeaveCall) -> None:
-        raise NotImplementedError
-
-    def flush(self) -> None:
-        pass
-
-
-class RecordingSink(Sink):
-    """In-memory sink for tests: keeps ordered start/end emissions."""
-
-    def __init__(self) -> None:
-        self.events: list[tuple[str, WeaveCall]] = []
-
-    def start(self, call: WeaveCall) -> None:
-        self.events.append(("start", call))
-
-    def end(self, call: WeaveCall) -> None:
-        self.events.append(("end", call))
+from .recording import RecordingSink
 
 
 class DebugSink(RecordingSink):
-    """Writes the finished trace tree to a file on flush — local inspection, no Weave."""
-
     def __init__(self, path: str) -> None:
         super().__init__()
         self.path = path

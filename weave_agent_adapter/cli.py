@@ -80,10 +80,10 @@ def cmd_sidecar(args) -> int:
 
     debug_file = args.debug_file or os.environ.get("WEAVE_AGENT_ADAPTER_DEBUG_FILE")
     if debug_file:
-        from .sink import DebugSink
+        from .sinks.debug import DebugSink
         sink = DebugSink(debug_file)
     else:
-        from .weave_sink import WeaveSink
+        from .sinks.weave import WeaveSink
         sink = WeaveSink(args.project)
 
     idle_s = float(os.environ.get("WEAVE_AGENT_ADAPTER_IDLE_S", args.idle_s))
