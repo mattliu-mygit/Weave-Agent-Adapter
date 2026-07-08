@@ -106,6 +106,22 @@ def cmd_sidecar(args) -> int:
     return 0
 
 
+def cmd_install(args) -> int:
+    from .install import install
+    p = install(args.harness, user=not args.local, profiles_dir=args.profiles_dir,
+                path=args.settings_path)
+    print(f"registered {args.harness} hooks in {p}")
+    return 0
+
+
+def cmd_uninstall(args) -> int:
+    from .install import uninstall
+    p = uninstall(args.harness, user=not args.local, profiles_dir=args.profiles_dir,
+                  path=args.settings_path)
+    print(f"removed weave-agent-adapter hooks from {p}")
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="weave-agent-adapter")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -121,6 +137,15 @@ def main(argv=None) -> int:
     s.add_argument("--debug-file")              # write the tree to a file instead of Weave
     s.add_argument("--profiles-dir")
     s.set_defaults(fn=cmd_sidecar)
+
+    for name, fn in (("install", cmd_install), ("uninstall", cmd_uninstall)):
+        sp = sub.add_parser(name)
+        sp.add_argument("--harness", default="claude-code")
+        sp.add_argument("--local", action="store_true",
+                        help="write ./.claude/settings.json instead of ~/.claude")
+        sp.add_argument("--profiles-dir")
+        sp.add_argument("--settings-path")      # override target (testing)
+        sp.set_defaults(fn=fn)
 
     args = p.parse_args(argv)
     return args.fn(args)
