@@ -2,7 +2,7 @@
 
 Trace agent-harness sessions to [Weights & Biases Weave](https://wandb.ai/site/weave) — as a nested trace you can inspect, filter, and analyze. Two harnesses ship as profiles: [Claude Code](https://docs.claude.com/en/docs/claude-code) and [Codex](https://developers.openai.com/codex).
 
-> **Status:** M0–M5 implemented and tested (27-test suite). Claude Code payloads verified against a real capture. Installable from source (`pip install -e .` + `weave-agent-adapter install`); not yet published to PyPI.
+> **Status:** M0–M5 implemented and tested (28-test suite). Claude Code payloads verified against a real capture. Installable from source (`pip install -e .` + `weave-agent-adapter install`); not yet published to PyPI.
 
 ## What it captures
 
@@ -19,6 +19,34 @@ session
 ```
 
 Beyond the call tree, it records the human-in-the-loop signals: **approval**, **rejection**, and **steering**.
+
+## Quickstart
+
+Install (the `sidecar` extra pulls in Weave; the hook itself is stdlib-only):
+
+```bash
+pip install "weave-agent-adapter[sidecar]"      # from source: pip install -e ".[sidecar]"
+```
+
+Point it at your Weave project. The API key is read from the environment only — never written to disk:
+
+```bash
+export WANDB_API_KEY=...                          # your W&B API key
+export WEAVE_PROJECT=my-entity/my-project
+```
+
+Register the hooks for your harness (edits that harness's own settings file; idempotent and removable):
+
+```bash
+weave-agent-adapter install                       # Claude Code (default)
+weave-agent-adapter install --harness codex       # Codex
+```
+
+Now use your agent normally — each session appears in Weave as a nested trace. The sidecar starts on the first event and scales to zero when idle. To remove the hooks:
+
+```bash
+weave-agent-adapter uninstall [--harness codex]
+```
 
 ## How it works
 
