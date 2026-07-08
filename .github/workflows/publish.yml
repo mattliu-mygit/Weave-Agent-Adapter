@@ -4,7 +4,7 @@ on:
   push:
     tags: ["v*"]
 
-# Publishes to PyPI via trusted publishing (OIDC) — no API token is stored.
+# Publishes to PyPI via trusted publishing (OIDC), no API token is stored.
 # One-time setup on PyPI (pypi.org -> Account/Project -> Publishing -> add a
 # GitHub publisher). For the FIRST release use a "pending publisher":
 #   PyPI project name: weave-agent-adapter
