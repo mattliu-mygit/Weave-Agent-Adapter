@@ -16,7 +16,8 @@ PostToolUseFailure = "tool_error"
 PermissionRequest  = "permission_request"
 PermissionDenied   = "permission_denied"
 Stop               = "turn_end"
-SubagentStop       = "subagent_stop"       # Claude Code has no SubagentStart; stop annotates
+SubagentStart      = "subagent_start"      # documented but not emitted in 2.1.201; tracer lazy-opens the span from the first interior tool as a fallback
+SubagentStop       = "subagent_stop"
 PreCompact         = "compaction"
 SessionEnd         = "session_end"
 
@@ -41,5 +42,5 @@ command = "weave-agent-adapter hook --harness claude-code"  # installer appends 
 events  = [
   "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
   "PostToolUseFailure", "PermissionRequest", "PermissionDenied", "Stop",
-  "SubagentStop", "PreCompact", "SessionEnd",
+  "SubagentStart", "SubagentStop", "PreCompact", "SessionEnd",
 ]

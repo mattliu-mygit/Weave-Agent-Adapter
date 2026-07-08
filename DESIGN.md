@@ -7,7 +7,7 @@
 - **Normal Weave usage.** `weave.init()` once, warm client for the session → async batching, retry, and native call rendering come from the SDK; redaction and sampling are ours (see §9).
 - **Non-intrusive.** The harness is never modified. Hooks are external one-line commands (plugin auto-registers; 0 authored lines). The sidecar is a separate process beside the harness, not inside it.
 - **Never block, never break.** Hooks do a µs local write and exit 0; all failure swallowed.
-- **Harness-agnostic.** The core runs on a fixed set of **canonical actions**; each harness plugs in via an **adapter** (its hook mechanism) + a declarative **profile** (its event/field/registration mapping) — [spec 02](specs/02-harness-profiles.md). Assumes the harness has a hook (or hook-like) system. Command-based hooks reuse one adapter, so most harnesses are profile-only, no code. Two profiles ship — Claude Code and **Codex** (`profiles/codex.toml`); Codex was added with *zero* code changes (it even exercises handlers Claude Code doesn't, like `SubagentStart`), which is the concrete proof of the claim. Event names below reflect the Claude Code profile.
+- **Harness-agnostic.** The core runs on a fixed set of **canonical actions**; each harness plugs in via an **adapter** (its hook mechanism) + a declarative **profile** (its event/field/registration mapping) — [spec 02](specs/02-harness-profiles.md). Assumes the harness has a hook (or hook-like) system. Command-based hooks reuse one adapter, so most harnesses are profile-only, no code. Two profiles ship — Claude Code and **Codex** (`profiles/codex.toml`); Codex was added with *zero* code changes, the concrete proof of the claim. (Codex also emits `SubagentStart` in practice, which Claude Code documents but doesn't emit in 2.1.201 — so the two profiles genuinely exercise different event paths.) Event names below reflect the Claude Code profile.
 
 ## 2. Architecture
 
@@ -88,7 +88,7 @@ What the SDK gives us on the low-level (`call_start`/`call_end`) path: **native 
 
 - **Spawn:** `SessionStart` (lazy, singleton). **Shutdown:** idle ~60–120s after last session / empty queue, post-flush.
 - **Crash / no `SessionEnd`:** a periodic sweep (`session_ttl_s`) finalizes sessions idle past the TTL — frees memory *and* closes the trace (marked `incomplete`) rather than leaving it dangling; the sidecar also finalizes any still-open sessions on shutdown. Undelivered sends are retried in-process; whatever fails lands in the SDK's disk dead-letter log — no automatic replay.
-- **Subagents:** a harness with explicit start/stop nests a real `agent.<type>` span via `agent_id`; Claude Code has only `SubagentStop`, so completion is annotated (the spawning `Task` already appears as a tool span). **Compaction:** `PreCompact` annotates the session with the trigger.
+- **Subagents:** nested under an `agent.<type>` span keyed by `agent_id`, with interior tools re-parented under it. Opened at `SubagentStart` if the harness emits it (Codex), else lazily on the first interior tool (Claude Code 2.1.201 documents `SubagentStart` but doesn't emit it); closed at `SubagentStop`. **Compaction:** `PreCompact` annotates the session with the trigger.
 
 ## 12. Integration (zero authored lines)
 

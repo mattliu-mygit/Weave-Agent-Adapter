@@ -7,8 +7,9 @@
 #   - No SessionEnd event -> sessions close via the sidecar's idle sweep.
 #   - No PermissionDenied event -> a denied tool (hook exit 2) simply has no
 #     PostToolUse; it closes via the sweep rather than as an explicit rejection.
-#   - Has SubagentStart (Claude Code doesn't), so subagents get a real
-#     open/close span instead of a stop-only annotation.
+#   - Emits SubagentStart in practice (Claude Code documents it but doesn't emit
+#     it in 2.1.201), so subagents get a real open/close span rather than relying
+#     on the lazy-open-from-first-interior-tool fallback.
 
 [harness]
 name      = "codex"
