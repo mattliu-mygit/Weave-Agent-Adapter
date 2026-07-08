@@ -117,11 +117,13 @@ def test_subagent_stop_annotation():
     tr, sink = run([
         ("SessionStart", {"session_id": SID}),
         ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
-        ("SubagentStop", {"session_id": SID, "agent_type": "Explore", "agent_id": "a9"}),
+        ("SubagentStop", {"session_id": SID, "agent_type": "Explore", "agent_id": "a9",
+                          "last_assistant_message": "found 3 files"}),
     ])
     agent = one(sink, f"{NS}.agent.Explore")
-    assert agent.attributes[NS]["agent_type"] == "Explore"
-    assert agent.attributes[NS]["agent_id"] == "a9"
+    assert agent.inputs["agent_type"] == "Explore"
+    assert agent.inputs["agent_id"] == "a9"
+    assert end_of(sink, agent.id).output == "found 3 files"   # subagent's reply
 
 
 def test_subagent_interior_tool_nests_under_subagent():

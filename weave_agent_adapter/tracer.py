@@ -301,16 +301,22 @@ class Tracer:
         rec = t.subagents.pop(aid, None) if aid else None
         if rec is None and t.subagents:
             aid, rec = t.subagents.popitem()      # no id match: close most-recent (LIFO)
+        atype = (rec["type"] if rec else f.get("agent_type")) or "agent"
+        aid = aid or f.get("agent_id")
+        started = rec["started_at"] if rec else at   # stop-only: zero-duration marker
+        cid = rec["call_id"] if rec else _id()
         if rec is None:
-            # stop-only harness (e.g. Claude Code has no SubagentStart): annotate completion
-            atype = f.get("agent_type") or "agent"
-            self._instant(s, t.call_id, f"{NS}.agent.{atype}", at,
-                          attrs={"kind": "subagent", "phase": "stop",
-                                 "agent_type": atype, "agent_id": f.get("agent_id")})
-            return
+            # stop-only harness (e.g. Claude Code has no SubagentStart): the span
+            # is just the completion, but still carries the subagent's identity + reply
+            self.sink.start(WeaveCall(
+                id=cid, trace_id=s.trace_id, op_name=f"{NS}.agent.{atype}",
+                started_at=started, parent_id=t.call_id,
+                inputs={"agent_type": atype, "agent_id": aid},
+                attributes={NS: {"kind": "subagent", "phase": "stop", "agent_type": atype}},
+            ))
         self.sink.end(WeaveCall(
-            id=rec["call_id"], trace_id=s.trace_id, op_name=f"{NS}.agent.{rec['type']}",
-            started_at=rec["started_at"], ended_at=at,
+            id=cid, trace_id=s.trace_id, op_name=f"{NS}.agent.{atype}",
+            started_at=started, ended_at=at,
             output=self.redactor.scrub(f.get("agent_output")),
             attributes={NS: {"status": "ok"}},
         ))
