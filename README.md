@@ -1,6 +1,8 @@
 # weave-agent-adapter
 
-Trace agent-harness sessions to [Weights & Biases Weave](https://wandb.ai/site/weave) as a nested trace you can inspect, filter, and analyze. Two harnesses ship as profiles: [Claude Code](https://docs.claude.com/en/docs/claude-code) and [Codex](https://developers.openai.com/codex). Any harness (open source, closed source, personal, etc.) with a hook-like system can be added with a profile and no code (see [Bring your own harness](#bring-your-own-harness)).
+See exactly what your coding agents did, and what you let them do. weave-agent-adapter records every agent session to [Weights & Biases Weave](https://wandb.ai/site/weave) as a nested trace of turns, tool calls, and the human-in-the-loop moments other tools drop on the floor: approvals, rejections, and mid-turn steering.
+
+Point it at **any** harness with a hook-like system, closed source, open source, or one you wrote yourself, through a **single config file**. No code to write, no forking the harness (see [Bring your own harness](#bring-your-own-harness)). [Claude Code](https://docs.claude.com/en/docs/claude-code) and [Codex](https://developers.openai.com/codex) ship built in.
 
 ## What it captures
 
