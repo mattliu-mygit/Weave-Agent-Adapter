@@ -94,6 +94,32 @@ def test_subagent_stop_annotation():
     assert agent.attributes[NS]["agent_id"] == "a9"
 
 
+def test_subagent_interior_tool_nests_under_subagent():
+    # Claude Code has no SubagentStart: an interior tool (agent_id set) must
+    # lazily open the subagent span and nest under it, then SubagentStop closes it.
+    tr, sink = run([
+        ("SessionStart", {"session_id": SID}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
+        ("PreToolUse", {"session_id": SID, "tool_name": "Agent", "tool_use_id": "launch"}),
+        ("PostToolUse", {"session_id": SID, "tool_name": "Agent", "tool_use_id": "launch",
+                         "tool_response": {}}),
+        ("PreToolUse", {"session_id": SID, "tool_name": "Bash", "tool_use_id": "inner",
+                        "agent_id": "a9", "agent_type": "Explore"}),
+        ("PostToolUse", {"session_id": SID, "tool_name": "Bash", "tool_use_id": "inner",
+                         "agent_id": "a9", "tool_response": {"stdout": "x"}}),
+        ("SubagentStop", {"session_id": SID, "agent_id": "a9", "agent_type": "Explore",
+                          "last_assistant_message": "done"}),
+    ])
+    turn = one(sink, f"{NS}.turn")
+    agent = one(sink, f"{NS}.agent.Explore")
+    launcher = [c for c in starts(sink) if c.op_name == f"{NS}.tool.Agent"][0]
+    inner = [c for c in starts(sink) if c.op_name == f"{NS}.tool.Bash"][0]
+    assert launcher.parent_id == turn.id          # launcher is under the turn
+    assert agent.parent_id == turn.id             # subagent span under the turn
+    assert inner.parent_id == agent.id            # interior tool under the subagent
+    assert end_of(sink, agent.id).output == "done"
+
+
 def test_compaction_under_session_root():
     tr, sink = run([
         ("SessionStart", {"session_id": SID}),

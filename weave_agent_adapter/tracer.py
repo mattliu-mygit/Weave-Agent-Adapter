@@ -177,11 +177,37 @@ class Tracer:
             attrs["partial"] = True          # harness has no pre-tool hook
         self.sink.start(WeaveCall(
             id=tc.call_id, trace_id=s.trace_id, op_name=f"{NS}.tool.{tc.tool_name}",
-            started_at=at, parent_id=t.call_id,
+            started_at=at, parent_id=self._tool_parent(s, t, f, at),
             inputs={"tool_name": tc.tool_name, "tool_input": tc.tool_input},
             attributes={NS: attrs},
         ))
         return tc
+
+    def _tool_parent(self, s, t, f, at) -> str:
+        # a tool run inside a subagent carries that subagent's agent_id -> nest it
+        # under the subagent span (lazily opened if the harness has no start event)
+        aid = f.get("agent_id")
+        if not aid:
+            return t.call_id
+        rec = t.subagents.get(aid)
+        if rec is None:
+            rec = self._open_subagent(s, t, aid, f.get("agent_type") or "agent", at)
+        return rec["call_id"]
+
+    def _open_subagent(self, s, t, aid, atype, at, task=None, spawn=None) -> dict:
+        cid = _id()
+        rec = {"call_id": cid, "started_at": at, "type": atype}
+        t.subagents[aid] = rec
+        inputs = {"agent_type": atype}
+        if task is not None:
+            inputs["task"] = self.redactor.scrub(task)
+        self.sink.start(WeaveCall(
+            id=cid, trace_id=s.trace_id, op_name=f"{NS}.agent.{atype}",
+            started_at=at, parent_id=t.call_id, inputs=inputs,
+            attributes={NS: {"kind": "subagent", "agent_type": atype, "agent_id": aid,
+                             "spawning_tool_use_id": spawn}},
+        ))
+        return rec
 
     def _on_permission_request(self, sid, f, at) -> None:
         # recorded on the tool (prompt shown), not a span of its own
@@ -244,18 +270,9 @@ class Tracer:
         s = self.sessions.get(sid)
         if not s or not s.current_turn:
             return
-        t = s.current_turn
-        aid = f.get("agent_id") or _id()
-        atype = f.get("agent_type") or "agent"
-        cid = _id()
-        t.subagents[aid] = {"call_id": cid, "started_at": at, "type": atype}
-        self.sink.start(WeaveCall(
-            id=cid, trace_id=s.trace_id, op_name=f"{NS}.agent.{atype}",
-            started_at=at, parent_id=t.call_id,
-            inputs={"agent_type": atype, "task": self.redactor.scrub(f.get("agent_task"))},
-            attributes={NS: {"kind": "subagent", "agent_type": atype, "agent_id": aid,
-                             "spawning_tool_use_id": f.get("tool_use_id")}},
-        ))
+        self._open_subagent(s, s.current_turn, f.get("agent_id") or _id(),
+                            f.get("agent_type") or "agent", at,
+                            task=f.get("agent_task"), spawn=f.get("tool_use_id"))
 
     def _on_subagent_stop(self, sid, f, at) -> None:
         s = self.sessions.get(sid)
