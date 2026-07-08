@@ -1,0 +1,5 @@
+{
+  "name": "weave-agent-adapter",
+  "description": "Trace agent-harness sessions to W&B Weave (session/turn/tool/permission).",
+  "version": "0.1.0"
+}

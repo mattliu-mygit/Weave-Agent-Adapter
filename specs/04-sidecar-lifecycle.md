@@ -27,7 +27,7 @@ Timer-driven. Exit when **no active sessions** AND the queue is drained, for `si
 
 State is an in-memory cache; a crash loses in-flight session state, which is acceptable for v1:
 
-- `WEAVE_ENABLE_WAL=true` covers **delivery** durability — queued sends replay on restart.
+- Delivery is best-effort: the SDK batches and retries sends (`retry_max_attempts=3`); items that still fail are appended to a disk dead-letter log (`WEAVE_ENABLE_DISK_FALLBACK`, on by default). This is *not* a replay-on-restart WAL — the log is not automatically re-sent.
 - Orphaned open calls from a crashed instance are left as-is (they show open in Weave); no custom finalize layer in v1.
 
 ## Periodic sweep

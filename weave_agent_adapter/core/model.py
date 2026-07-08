@@ -96,6 +96,7 @@ class Turn:
     tool_calls: dict = field(default_factory=dict)   # correlation_key -> ToolCall
     tool_order: list = field(default_factory=list)   # preserves emission order
     steering: list = field(default_factory=list)
+    subagents: dict = field(default_factory=dict)    # agent_id -> open subagent span
     ended_at: Optional[float] = None
     status: TurnStatus = TurnStatus.OPEN
 

@@ -8,7 +8,8 @@ must supply our own ids and our hook-stamped `captured_at` — otherwise Weave
 would stamp wall-clock at ingest time and the durations would be wrong.
 
 Delivery still goes through the client's async batch processor (`client.server`),
-so batching/retry/WAL are unchanged. `weave` is imported lazily.
+so batching and retry are unchanged, and spans land in Weave's native call model
+(not raw OTel JSON). `weave` is imported lazily.
 """
 from __future__ import annotations
 

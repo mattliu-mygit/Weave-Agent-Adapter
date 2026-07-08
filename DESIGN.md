@@ -4,7 +4,7 @@
 
 ## 1. Principles
 
-- **Normal Weave usage.** `weave.init()` once, warm client for the session → WAL, batching, retry, redaction, sampling all native.
+- **Normal Weave usage.** `weave.init()` once, warm client for the session → async batching, retry, and native call rendering come from the SDK; redaction and sampling are ours (see §9).
 - **Non-intrusive.** The harness is never modified. Hooks are external one-line commands (plugin auto-registers; 0 authored lines). The sidecar is a separate process beside the harness, not inside it.
 - **Never block, never break.** Hooks do a µs local write and exit 0; all failure swallowed.
 - **Harness-agnostic.** The core runs on a fixed set of **canonical actions**; each harness plugs in via an **adapter** (its hook mechanism) + a declarative **profile** (its event/field/registration mapping) — [spec 02](specs/02-harness-profiles.md). Assumes the harness has a hook (or hook-like) system. Command-based hooks reuse one adapter, so most harnesses are profile-only, no code. Claude Code is the first; event names below reflect it.
@@ -16,7 +16,7 @@
    │  session-start hook ──▶ lazy-spawn / connect ──▶ sidecar (1 warm weave.init, per machine)
    │  every other hook  ──(1 JSON line, local socket)──▶  │  in-mem trace state
    └───────────────────────────────────────────────────  ▼
-                                          Weave SDK (async/WAL/retry/redact) ──▶ Weave
+                                          Weave SDK (async batch / retry) ──▶ Weave
 ```
 
 - **Hooks = dumb emitters.** Read stdin → forward the raw payload to the sidecar socket → exit 0. No parsing, no SDK, no init, no network. If the socket's missing, append to a spool and move on.
@@ -76,7 +76,7 @@ One sidecar (fixed socket + `flock`) multiplexes all sessions: `dict[session_id 
 
 ## 9. Reliability & Weave built-ins
 
-The sidecar runs the SDK, so **async batching, retry, and WAL** (`WEAVE_ENABLE_WAL=true`, crash-safe restart) come for free. **Redaction** and **sampling** are ours (`redact.py`; a per-session hash in the tracer) — the SDK's `redact_keys`/`tracing_sample_rate` only apply to the `@weave.op` path, which we bypass for the low-level call API. Autopatching is disabled (we trace no LLM SDKs).
+What the SDK gives us on the low-level (`call_start`/`call_end`) path: **native call rendering** (spans land in Weave's call model, not raw OTel JSON), **async batching**, and **retry** with backoff (`retry_max_attempts=3`). Items that still fail are appended to a **disk dead-letter log** (`enable_disk_fallback`, on by default) — best-effort, *not* a replay-on-restart WAL. **Redaction** and **sampling** are ours (`redact.py`; a per-session hash in the tracer): the SDK's `redact_keys`/`tracing_sample_rate` only apply to the `@weave.op` path, which we bypass because the low-level call API is the only surface that accepts explicit timestamps (§ timing). Autopatching is disabled (we trace no LLM SDKs).
 
 ## 10. Latency & safety
 
@@ -87,8 +87,8 @@ The sidecar runs the SDK, so **async batching, retry, and WAL** (`WEAVE_ENABLE_W
 ## 11. Lifecycle
 
 - **Spawn:** `SessionStart` (lazy, singleton). **Shutdown:** idle ~60–120s after last session / empty queue, post-flush.
-- **Crash / no `SessionEnd`:** a periodic sweep drops sessions idle > TTL (frees memory); orphaned open calls are left as-is (best-effort). `WEAVE_ENABLE_WAL` covers delivery durability.
-- **Subagents:** `SubagentStart/Stop` nest via `agent_id`. **Compaction:** `PreCompact/PostCompact` annotate.
+- **Crash / no `SessionEnd`:** a periodic sweep drops sessions idle > TTL (frees memory); orphaned open calls are left as-is (best-effort). Undelivered sends are retried in-process; whatever fails lands in the SDK's disk dead-letter log — no automatic replay.
+- **Subagents:** a harness with explicit start/stop nests a real `agent.<type>` span via `agent_id`; Claude Code has only `SubagentStop`, so completion is annotated (the spawning `Task` already appears as a tool span). **Compaction:** `PreCompact` annotates the session with the trigger.
 
 ## 12. Integration (zero authored lines)
 
@@ -96,13 +96,24 @@ One static command per event — `weave-agent-adapter hook --harness <h> --event
 
 ## 13. Non-goals (v1)
 
-- **Custom durability / crash-recovery layer** — v1 is best-effort and leans on Weave's WAL; no bespoke spool/replay.
+- **Custom durability / crash-recovery layer** — v1 is best-effort: SDK batching + retry, with a disk dead-letter log for drops. No bespoke spool/replay, and no automatic replay of the dead-letter log.
 
 ## 14. Milestones
 
 - **M0 — Capture:** ✅ `hook.py` + `tools/inspect_capture.py`. Pending: a real-session run to confirm `tool_use_id`.
 - **M1 — Sidecar + core tree:** ✅ socket, warm `weave.init`, session/turn/tool spans, cross-process nesting, lazy-spawn/singleton/idle. WeaveSink verified live.
 - **M2 — Permission/approval/rejection/steering:** ✅ (as tool attributes + steering spans).
-- **M3 — Redaction, sampling, config; WAL flag:** ✅
-- **M4 — Subagents, compaction, hardening:** pending.
-- **M5 — Packaging + installer:** ✅ pyproject + `install`/`uninstall`. Pending: plugin manifest.
+- **M3 — Redaction, sampling, config:** ✅
+- **M4 — Subagents, compaction, hardening:** ✅ canonical `subagent_start`/`subagent_stop` (stop-only harnesses annotate) + `compaction`; Claude Code maps `SubagentStop`/`PreCompact`.
+- **M5 — Packaging + installer:** ✅ pyproject + `install`/`uninstall` + `plugin` (ships `.claude-plugin/plugin.json` + `hooks/hooks.json`, in [plugin/claude-code](plugin/claude-code)).
+
+## 15. Prior art & the SDK-vs-OTLP decision (verified)
+
+Two projects overlap: **`wandb/weave-claude-code`** (official; daemon + OTLP to Weave, Claude-only, TS, no redaction/sampling) and **`o11y-dev/opentelemetry-hooks`** (harness-agnostic, OTLP, Python). Weave also ingests OTLP directly (`trace.wandb.ai/otel/v1/traces`).
+
+We keep the **Weave-SDK low-level path** (`call_start`/`call_end`) rather than OTLP, verified live by emitting the same session both ways:
+
+- **Timing forces it.** `create_call`/`finish_call` (0.52.17) take no timestamp args → ingest wall-clock. Only the low-level API accepts our hook-stamped `started_at`/`ended_at`. Redaction/sampling live *only* on the high-level `@weave.op` path, so going low-level means we own them (that's why `redact.py` exists — not reinvention).
+- **What the SDK actually buys us** (low-level): native call rendering, async batching, retry, disk dead-letter. Not redaction/sampling/cost/feedback.
+- **OTLP is genuinely close when tuned** (OpenInference `input.value`/`output.value`, `wandb.display_name`, `gen_ai.usage.*`): identical nesting, clean names, token/cost, feedback, monitors all work. Residual OTLP gaps we confirmed: inputs nest under an `input.value` wrapper (a literal dotted key → monitor filters need `input\.value.…` or silently return 0); permission lands inside the raw `otel_span` (events/status) not as a top-level attribute; hashed `op_name`; and **playground/chat replay is effectively SDK-only**.
+- **Net:** for a permission/steering tracer, first-class permission attributes + clean queryability + playground are the SDK's real edge; operational monitoring/cost/feedback are a wash. Revisit OTLP if broad harness reach outranks rich Weave rendering.

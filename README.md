@@ -25,7 +25,7 @@ Beyond the call tree, it records the human-in-the-loop signals: **approval**, **
 Non-intrusive by design — the harness itself is never modified.
 
 - **Hooks** (external one-line commands, auto-registered by a plugin) emit each event to a local socket and exit immediately.
-- A **sidecar** — spawned at session start, one warm process per machine — hosts a single `weave.init()` client and turns events into nested Weave calls. This is what makes Weave's async batching, retry, WAL, and redaction actually apply (they need a long-lived process).
+- A **sidecar** — spawned at session start, one warm process per machine — hosts a single `weave.init()` client and turns events into nested Weave calls. A long-lived process is what lets the SDK's async batching and retry apply, and keeps spans in Weave's native call model (rather than raw OTel JSON).
 
 Adopters write **zero** lines of code: installing the plugin registers everything.
 
@@ -34,11 +34,11 @@ See [DESIGN.md](DESIGN.md) for the full design, [specs/](specs/) for detailed sp
 ## Roadmap
 
 - [ ] **M0** — capture mode (hook written; inspector + real-session schema/correlation confirmation pending)
-- [ ] **M1** — sidecar + core trace tree (session / turn / tool)
-- [ ] **M2** — permission / approval / rejection / steering
-- [ ] **M3** — redaction, sampling, WAL, config
-- [ ] **M4** — subagents, compaction, hardening
-- [ ] **M5** — plugin + pip packaging
+- [x] **M1** — sidecar + core trace tree (session / turn / tool)
+- [x] **M2** — permission / approval / rejection / steering
+- [x] **M3** — redaction, sampling, config
+- [x] **M4** — subagents, compaction, hardening
+- [x] **M5** — plugin + pip packaging
 
 ## License
 

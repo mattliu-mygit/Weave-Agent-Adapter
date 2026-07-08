@@ -83,8 +83,9 @@ def cmd_sidecar(args) -> int:
 
     cfg = load_config(args.config)
     project = args.project or cfg.project
-    if cfg.enable_wal:
-        os.environ.setdefault("WEAVE_ENABLE_WAL", "true")
+    os.environ.setdefault(
+        "WEAVE_ENABLE_DISK_FALLBACK", "true" if cfg.enable_disk_fallback else "false"
+    )
 
     debug_file = args.debug_file or os.environ.get("WEAVE_AGENT_ADAPTER_DEBUG_FILE")
     if debug_file:
@@ -122,6 +123,13 @@ def cmd_uninstall(args) -> int:
     return 0
 
 
+def cmd_plugin(args) -> int:
+    from .install import write_plugin
+    d = write_plugin(args.harness, args.dest, profiles_dir=args.profiles_dir)
+    print(f"wrote {args.harness} plugin to {d}")
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="weave-agent-adapter")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -146,6 +154,12 @@ def main(argv=None) -> int:
         sp.add_argument("--profiles-dir")
         sp.add_argument("--settings-path")      # override target (testing)
         sp.set_defaults(fn=fn)
+
+    pl = sub.add_parser("plugin", help="write a Claude Code plugin dir (zero-config install)")
+    pl.add_argument("--harness", default="claude-code")
+    pl.add_argument("--dest", required=True, help="output plugin directory")
+    pl.add_argument("--profiles-dir")
+    pl.set_defaults(fn=cmd_plugin)
 
     args = p.parse_args(argv)
     return args.fn(args)

@@ -7,7 +7,7 @@ active_harness = "claude-code"        # -> weave_agent_adapter/profiles/<name>.t
 entity  = "your-entity"
 project = "claude-code"
 # WANDB_API_KEY is read from the environment — never put secrets in this file.
-enable_wal = true                      # crash-safe queued sends (WEAVE_ENABLE_WAL)
+enable_disk_fallback = true            # dead-letter log for sends that fail after retries (WEAVE_ENABLE_DISK_FALLBACK)
 
 [redaction]
 enabled     = true                     # scrub secrets before sending (default true)

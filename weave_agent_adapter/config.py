@@ -25,7 +25,7 @@ DEFAULT_PATH = os.path.expanduser(
 class Config:
     active_harness: str = "claude-code"
     project: str = "weave-agent-adapter"   # "entity/project" or bare "project"
-    enable_wal: bool = True
+    enable_disk_fallback: bool = True      # SDK dead-letter log for sends that fail after retries
     redact_enabled: bool = True
     redact_keys: list = None               # None -> Redactor defaults
     session_rate: float = 1.0
@@ -57,7 +57,7 @@ def load_config(path=None) -> Config:
     entity = os.environ.get("WANDB_ENTITY", weave.get("entity"))
     if entity and "/" not in c.project:
         c.project = f"{entity}/{c.project}"
-    c.enable_wal = bool(weave.get("enable_wal", c.enable_wal))
+    c.enable_disk_fallback = bool(weave.get("enable_disk_fallback", c.enable_disk_fallback))
     c.redact_enabled = bool(red.get("enabled", c.redact_enabled))
     c.redact_keys = red.get("redact_keys", None)
     c.session_rate = float(samp.get("session_rate", c.session_rate))

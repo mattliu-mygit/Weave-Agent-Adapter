@@ -15,22 +15,27 @@ PostToolUseFailure = "tool_error"
 PermissionRequest  = "permission_request"
 PermissionDenied   = "permission_denied"
 Stop               = "turn_end"
+SubagentStop       = "subagent_stop"       # Claude Code has no SubagentStart; stop annotates
+PreCompact         = "compaction"
 SessionEnd         = "session_end"
 
 [fields]
-session_id      = "session_id"
-tool_name       = "tool_name"
-tool_input      = "tool_input"
-tool_output     = "tool_response"
-tool_use_id     = "tool_use_id"
-transcript      = "transcript_path"
-permission_mode = "permission_mode"
-cwd             = "cwd"
+session_id         = "session_id"
+tool_name          = "tool_name"
+tool_input         = "tool_input"
+tool_output        = "tool_response"
+tool_use_id        = "tool_use_id"
+transcript         = "transcript_path"
+permission_mode    = "permission_mode"
+cwd                = "cwd"
+agent_type         = "subagent_type"       # provisional (M0)
+compaction_trigger = "trigger"
 
 [registration]
 kind    = "claude-code-settings"
 command = "weave-agent-adapter hook --harness claude-code"  # installer appends --event <event>
 events  = [
   "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
-  "PostToolUseFailure", "PermissionRequest", "PermissionDenied", "Stop", "SessionEnd",
+  "PostToolUseFailure", "PermissionRequest", "PermissionDenied", "Stop",
+  "SubagentStop", "PreCompact", "SessionEnd",
 ]

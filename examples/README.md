@@ -7,7 +7,7 @@ Copy-pasteable configs. Replace `/path/to/weave-agent-adapter` with this repo's 
 | File | Status | Use |
 |---|---|---|
 | [`claude-code.settings.capture.json`](claude-code.settings.capture.json) | **works now (M0)** | Capture-mode hooks — dumps raw payloads to `~/.weave-agent-adapter/capture/` |
-| [`config.toml`](config.toml) | intended (M1+) | Sidecar config — Weave project, redaction, sampling, WAL |
+| [`config.toml`](config.toml) | intended (M1+) | Sidecar config — Weave project, redaction, sampling, delivery |
 
 The harness profile itself lives at [`../weave_agent_adapter/profiles/claude-code.toml`](../weave_agent_adapter/profiles/claude-code.toml).
 

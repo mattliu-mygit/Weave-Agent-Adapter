@@ -42,22 +42,46 @@ def _is_ours(entry: dict) -> bool:
     return any(MARKER in h.get("command", "") for h in entry.get("hooks", []))
 
 
-def install(harness: str, user: bool = True, profiles_dir=None, path=None) -> str:
-    prof = load_profile(harness, profiles_dir)
-    reg = prof.registration
+def _entry(command: str, ev: str) -> dict:
+    return {"hooks": [{"type": "command", "command": f"{command} --event {ev}"}]}
+
+
+def _registration(harness: str, profiles_dir=None):
+    reg = load_profile(harness, profiles_dir).registration
     if reg.get("kind") != "claude-code-settings":
         raise ValueError(f"unsupported registration kind: {reg.get('kind')!r}")
-    command, events = reg["command"], reg.get("events", [])
+    return reg["command"], reg.get("events", [])
 
+
+def install(harness: str, user: bool = True, profiles_dir=None, path=None) -> str:
+    command, events = _registration(harness, profiles_dir)
     path = path or _settings_path(user)
     data = _read_json(path)
     hooks = data.setdefault("hooks", {})
     for ev in events:
         others = [e for e in hooks.get(ev, []) if not _is_ours(e)]
-        others.append({"hooks": [{"type": "command", "command": f"{command} --event {ev}"}]})
+        others.append(_entry(command, ev))
         hooks[ev] = others
     _write_json(path, data)
     return path
+
+
+def write_plugin(harness: str, dest: str, profiles_dir=None) -> str:
+    """Emit a Claude Code plugin dir (manifest + hooks.json) for zero-config install.
+
+    Same per-event commands as `install`, but packaged so a user adds the plugin
+    once instead of editing settings.json — the hooks auto-register on load.
+    """
+    command, events = _registration(harness, profiles_dir)
+    manifest = {
+        "name": "weave-agent-adapter",
+        "description": "Trace agent-harness sessions to W&B Weave (session/turn/tool/permission).",
+        "version": "0.1.0",
+    }
+    hooks = {ev: [_entry(command, ev)] for ev in events}
+    _write_json(os.path.join(dest, ".claude-plugin", "plugin.json"), manifest)
+    _write_json(os.path.join(dest, "hooks", "hooks.json"), {"hooks": hooks})
+    return dest
 
 
 def uninstall(harness: str, user: bool = True, profiles_dir=None, path=None) -> str:

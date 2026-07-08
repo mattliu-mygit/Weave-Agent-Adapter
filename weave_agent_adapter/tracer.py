@@ -2,7 +2,10 @@
 
 Turns normalized hook events into a nested tree of `WeaveCall` start/end
 emissions on a `Sink`. Holds per-session state in memory; all harness-specific
-knowledge stays in the `Profile`.
+knowledge stays in the `Profile`. Canonical actions handled: session, turn,
+tool (pre/post/error), permission (request/denied), subagent (start/stop),
+compaction. A harness maps only the events it emits — missing ones degrade
+gracefully (e.g. stop-only subagents annotate rather than span).
 
 Timing: every emission's time comes from the event's `captured_at`.
 Correlation (spec 05): tool calls key off the profile's `tool_use_id` field
@@ -217,6 +220,54 @@ class Tracer:
                              "permission_source": "user" if prompted else "auto",
                              "prompt_shown": prompted}},
         ))
+
+    # ------- subagents & compaction -------
+
+    def _on_subagent_start(self, sid, f, at) -> None:
+        s = self.sessions.get(sid)
+        if not s or not s.current_turn:
+            return
+        t = s.current_turn
+        aid = f.get("agent_id") or _id()
+        atype = f.get("agent_type") or "agent"
+        cid = _id()
+        t.subagents[aid] = {"call_id": cid, "started_at": at, "type": atype}
+        self.sink.start(WeaveCall(
+            id=cid, trace_id=s.trace_id, op_name=f"{NS}.agent.{atype}",
+            started_at=at, parent_id=t.call_id,
+            inputs={"agent_type": atype, "task": self.redactor.scrub(f.get("agent_task"))},
+            attributes={NS: {"kind": "subagent", "agent_type": atype, "agent_id": aid,
+                             "spawning_tool_use_id": f.get("tool_use_id")}},
+        ))
+
+    def _on_subagent_stop(self, sid, f, at) -> None:
+        s = self.sessions.get(sid)
+        if not s or not s.current_turn:
+            return
+        t = s.current_turn
+        aid = f.get("agent_id")
+        rec = t.subagents.pop(aid, None) if aid else None
+        if rec is None and t.subagents:
+            aid, rec = t.subagents.popitem()      # no id match: close most-recent (LIFO)
+        if rec is None:
+            # stop-only harness (e.g. Claude Code has no SubagentStart): annotate completion
+            self._instant(s, t.call_id, f"{NS}.agent.{f.get('agent_type') or 'agent'}", at,
+                          attrs={"kind": "subagent", "phase": "stop"})
+            return
+        self.sink.end(WeaveCall(
+            id=rec["call_id"], trace_id=s.trace_id, op_name=f"{NS}.agent.{rec['type']}",
+            started_at=rec["started_at"], ended_at=at,
+            output=self.redactor.scrub(f.get("agent_output")),
+            attributes={NS: {"status": "ok"}},
+        ))
+
+    def _on_compaction(self, sid, f, at) -> None:
+        # context compaction is session-level: annotate under the root
+        s = self.sessions.get(sid)
+        if not s:
+            return
+        self._instant(s, s.root_call_id, f"{NS}.compaction", at,
+                      attrs={"kind": "compaction", "trigger": f.get("compaction_trigger")})
 
     # ------- helpers -------
 
