@@ -42,6 +42,12 @@ agent_type         = "agent_type"
 agent_output       = "last_assistant_message"   # SubagentStop
 compaction_trigger = "trigger"              # PreCompact (provisional)
 
+[subagents]
+launcher_tools = []                          # Codex launcher tool name unconfirmed; subagents still nest under the turn via SubagentStart
+
+[thread]
+source = "none"                              # Codex transcript format unconfirmed; set to "field"+id_field or "transcript_root" once known
+
 [registration]
 user_path  = "~/.codex/hooks.json"           # install (default scope)
 local_path = ".codex/hooks.json"             # install --local

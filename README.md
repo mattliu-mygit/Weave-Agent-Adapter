@@ -92,6 +92,16 @@ tool_output = "tool_response"
 tool_use_id = "tool_use_id"     # per-tool-call correlation id, if the harness has one
 cwd         = "cwd"
 
+[subagents]                     # optional; omit and subagents just nest under the turn
+launcher_tools = ["Agent"]      # tool calls that spawn a subagent (the subagent nests under them)
+
+[thread]                        # optional; how to link forked/resumed sessions into one thread
+source   = "field"              # "field" | "transcript_root" | omit for none
+id_field = "conversation_id"    # for source="field": a [fields] name holding a stable conversation id
+# for source="transcript_root": read the transcript's first message id
+# skip_field = "isSidechain"    #   rows to skip when finding the root
+# id_key     = "uuid"           #   the row field to use as the id
+
 [registration]                  # where and how `install` wires the hooks
 user_path  = "~/.myharness/hooks.json"   # the harness's hook settings file
 local_path = ".myharness/hooks.json"     # project-scoped variant (install --local)
@@ -99,7 +109,7 @@ command    = "weave-agent-adapter hook --harness myharness"
 events     = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"]
 ```
 
-Map only the events your harness emits. Missing ones degrade gracefully: a harness with no session-end event closes sessions via the idle sweep, and one with no pre-tool event synthesizes the span from the completion.
+Map only the events your harness emits. Missing ones — and the optional `[subagents]`/`[thread]` sections — degrade gracefully: no session-end event → sessions close via the idle sweep; no pre-tool event → the span is synthesized from the completion; no `[subagents]` → subagents nest under the turn; no `[thread]` → sessions aren't thread-linked. Nothing is Claude-specific in the core: tool names and thread derivation are declared here, not hardcoded.
 
 `install` merges the hooks into the file named by `user_path` (or `local_path` with `--local`), preserving any other keys already there; `uninstall` removes only our entries. Any harness whose hook file uses the standard `{"hooks": {event: [...]}}` shape (Claude Code's `settings.json`, Codex's `hooks.json`, and most command-hook systems) works with no installer code changes.
 

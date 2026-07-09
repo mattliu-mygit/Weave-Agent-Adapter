@@ -39,6 +39,17 @@ class Profile:
     events: dict          # native event -> canonical action
     fields: dict          # canonical field -> dotted path in payload
     registration: dict
+    subagents: dict = None   # [subagents]: launcher_tools, ...
+    thread: dict = None      # [thread]: how to derive the conversation id
+
+    def __post_init__(self):
+        self.subagents = self.subagents or {}
+        self.thread = self.thread or {}
+
+    @property
+    def agent_tools(self) -> set:
+        # tool names whose calls spawn a subagent (empty -> subagents nest under the turn)
+        return set(self.subagents.get("launcher_tools", []))
 
     def canonical_event(self, native_event: str) -> Optional[str]:
         return self.events.get(native_event)
@@ -64,6 +75,8 @@ class Profile:
             events=dict(d.get("events", {})),
             fields=dict(d.get("fields", {})),
             registration=dict(d.get("registration", {})),
+            subagents=dict(d.get("subagents", {})),
+            thread=dict(d.get("thread", {})),
         )
 
 

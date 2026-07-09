@@ -257,6 +257,27 @@ def test_thread_id_from_transcript_root(tmp_path):
     assert one(tr.sink, f"{NS}.turn").thread_id == "ROOT-UUID"
 
 
+def test_thread_id_from_profile_field_source():
+    # a harness that exposes a conversation id directly in the payload: profile
+    # declares thread.source="field"; no transcript read, no Claude assumptions.
+    from weave_agent_adapter.core.model import WireEvent
+    from weave_agent_adapter.profile import Profile
+    from weave_agent_adapter.sinks.recording import RecordingSink
+    from weave_agent_adapter.tracer import Tracer
+    prof = Profile(
+        name="thirdparty", adapter="command-hook",
+        events={"SessionStart": "session_start", "UserPromptSubmit": "turn_start"},
+        fields={"session_id": "session_id", "prompt": "prompt", "conv": "conversation_id"},
+        registration={}, subagents={"launcher_tools": []},
+        thread={"source": "field", "id_field": "conv"},
+    )
+    tr = Tracer(prof, "p", RecordingSink())
+    for name, p in [("SessionStart", {"session_id": "s", "conversation_id": "CONV-9"}),
+                    ("UserPromptSubmit", {"session_id": "s", "prompt": "hi", "conversation_id": "CONV-9"})]:
+        tr.handle(WireEvent(1, "thirdparty", name, 1.0, p, 1))
+    assert one(tr.sink, f"{NS}.session").thread_id == "CONV-9"
+
+
 def test_turnless_session_emits_nothing():
     # a session opened and closed with no user prompt (background/quick-open) is dropped
     tr, sink = run([

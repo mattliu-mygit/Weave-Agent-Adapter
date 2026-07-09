@@ -32,7 +32,6 @@ from .profile import Profile
 from .redact import Redactor
 
 NS = "weave_agent_adapter"
-AGENT_TOOLS = {"Agent", "Task"}       # tools that spawn a subagent (nest the subagent under them)
 
 
 def _id() -> str:
@@ -101,32 +100,43 @@ class Tracer:
             started_at=at, last_activity=at,
             permission_mode=f.get("permission_mode"), cwd=cwd, transcript=f.get("transcript"),
         )
+        if self.profile.thread.get("source") == "field":
+            s.thread_id = f.get(self.profile.thread.get("id_field"))
         self.sessions[sid] = s
         # the session span is emitted lazily on the first turn (see _ensure_session):
         # Claude Code opens many turn-less sessions (background suggestion/title
         # agents, resumes, quick opens) we don't want cluttering the dashboard.
 
     def _thread_of(self, s: Session) -> Optional[str]:
-        # the uuid of the conversation's first message is copied verbatim into every
-        # resume/edit, so it's a fork-stable thread id. Read it once from the
-        # transcript: the first non-sidechain row that carries a uuid (the leading
-        # rows are metadata like titles/queue ops with no uuid). Streamed + capped.
-        if s.thread_id is not None or not s.transcript:
+        # The conversation id (Weave thread_id) links forks/resumes. How to get it
+        # is per-harness, declared in the profile's [thread] section:
+        #   source = "field"            -> a [fields] value carries it (resolved at
+        #                                  session start); nothing to do here.
+        #   source = "transcript_root"  -> the id of the conversation's first message,
+        #                                  copied verbatim into every fork. Read the
+        #                                  transcript once: first row not skipped and
+        #                                  carrying id_key. Streamed + capped.
+        #   (absent / other)            -> no thread linking.
+        if s.thread_id is not None:
             return s.thread_id
-        try:
-            with open(s.transcript) as fh:
-                for i, line in enumerate(fh):
-                    if i >= 50:                   # bound the scan; the first message is at the top
-                        break
-                    line = line.strip()
-                    if not line:
-                        continue
-                    r = json.loads(line)
-                    if not r.get("isSidechain") and r.get("uuid"):
-                        s.thread_id = r.get("uuid")
-                        break
-        except Exception:
-            pass
+        cfg = self.profile.thread
+        if cfg.get("source") == "transcript_root" and s.transcript:
+            skip_field = cfg.get("skip_field", "isSidechain")
+            id_key = cfg.get("id_key", "uuid")
+            try:
+                with open(s.transcript) as fh:
+                    for i, line in enumerate(fh):
+                        if i >= 50:               # bound the scan; the first message is at the top
+                            break
+                        line = line.strip()
+                        if not line:
+                            continue
+                        r = json.loads(line)
+                        if not r.get(skip_field) and r.get(id_key):
+                            s.thread_id = r.get(id_key)
+                            break
+            except Exception:
+                pass
         return s.thread_id
 
     def _ensure_session(self, s: Session) -> None:
@@ -233,7 +243,7 @@ class Tracer:
                       tool_input=self.redactor.scrub(f.get("tool_input") or {}), started_at=at)
         t.tool_calls[key] = tc
         t.tool_order.append(key)
-        if tc.tool_name in AGENT_TOOLS:
+        if tc.tool_name in self.profile.agent_tools:
             t.last_agent_tool = tc.call_id      # its subagent will nest under this call
         attrs = {"kind": "tool", "tool_name": tc.tool_name, "harness": self.profile.name}
         if partial:

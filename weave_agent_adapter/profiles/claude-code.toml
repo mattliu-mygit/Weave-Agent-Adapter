@@ -37,6 +37,14 @@ agent_output       = "last_assistant_message"   # SubagentStop
 denial_reason      = "denial_reason"       # PermissionDenied (provisional, not yet captured)
 compaction_trigger = "trigger"             # PreCompact (provisional, not yet captured)
 
+[subagents]
+launcher_tools = ["Agent", "Task"]         # tool calls that spawn a subagent; the subagent nests under them
+
+[thread]
+source     = "transcript_root"             # conversation id = first message's id in the transcript
+skip_field = "isSidechain"                 # skip subagent rows when finding the root
+id_key     = "uuid"                        # the row field to use as the conversation id
+
 [registration]
 user_path  = "~/.claude/settings.json"     # install (default scope)
 local_path = ".claude/settings.json"       # install --local
