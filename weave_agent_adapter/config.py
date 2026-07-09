@@ -26,6 +26,7 @@ class Config:
     active_harness: str = "claude-code"
     project: str = "weave-agent-adapter"   # "entity/project" or bare "project"
     project_per_repo: bool = False         # trace each repo (cwd leaf) to its own project
+    genai_turns: bool = False              # dual-emit turns as OTel GenAI traces (Signals plane)
     enable_disk_fallback: bool = True      # SDK dead-letter log for sends that fail after retries
     redact_enabled: bool = True
     redact_keys: list = None               # None -> Redactor defaults
@@ -60,6 +61,7 @@ def load_config(path=None) -> Config:
     if entity and "/" not in c.project:
         c.project = f"{entity}/{c.project}"
     c.project_per_repo = bool(weave.get("project_per_repo", c.project_per_repo))
+    c.genai_turns = bool(weave.get("genai_turns", c.genai_turns))
     c.enable_disk_fallback = bool(weave.get("enable_disk_fallback", c.enable_disk_fallback))
     c.redact_enabled = bool(red.get("enabled", c.redact_enabled))
     c.redact_keys = red.get("redact_keys", None)

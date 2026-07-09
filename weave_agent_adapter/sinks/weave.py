@@ -37,6 +37,10 @@ class WeaveSink(Sink):
         self._server = self._client.server
         self._project_id = f"{self._client.entity}/{self._client.project}"
 
+    @property
+    def project_id(self) -> str:
+        return self._project_id            # "entity/project", for co-sinks (GenAISink)
+
     def start(self, wc: WeaveCall) -> None:
         self._server.call_start(self._tsi.CallStartReq(
             start=self._tsi.StartedCallSchemaForInsert(

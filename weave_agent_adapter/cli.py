@@ -91,13 +91,22 @@ def cmd_sidecar(args) -> int:
     if debug_file:
         from .sinks.debug import DebugSink
         sink = DebugSink(debug_file)
-    elif cfg.project_per_repo:
-        from .sinks.weave import WeaveSink
-        from .sinks.routing import RoutingSink
-        sink = RoutingSink(lambda p: WeaveSink(p), default_project=project)
     else:
         from .sinks.weave import WeaveSink
-        sink = WeaveSink(project)
+
+        def make(p):
+            ws = WeaveSink(p)
+            if not cfg.genai_turns:
+                return ws
+            from .sinks.genai import GenAISink
+            from .sinks.tee import TeeSink
+            return TeeSink([ws, GenAISink(ws.project_id)])
+
+        if cfg.project_per_repo:
+            from .sinks.routing import RoutingSink
+            sink = RoutingSink(make, default_project=project)
+        else:
+            sink = make(project)
 
     redactor = Redactor(deny_keys=cfg.redact_keys, enabled=cfg.redact_enabled)
     sc = Sidecar(sink, project, transport.SOCKET_PATH, profiles_dir=args.profiles_dir,

@@ -32,7 +32,12 @@ Issues = "https://github.com/mattliu-mygit/Weave-Agent-Adapter/issues"
 
 # The hook path is stdlib-only; only the sidecar needs Weave.
 [project.optional-dependencies]
-sidecar = ["weave>=0.51"]
+sidecar = [
+    "weave>=0.51",
+    # genai_turns dual-emit (Signals plane); unused unless enabled in config
+    "opentelemetry-sdk",
+    "opentelemetry-exporter-otlp-proto-http",
+]
 dev = ["pytest>=7"]
 
 [project.scripts]
