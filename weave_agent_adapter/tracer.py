@@ -32,6 +32,7 @@ from .profile import Profile
 from .redact import Redactor
 
 NS = "weave_agent_adapter"
+AGENT_TOOLS = {"Agent", "Task"}       # tools that spawn a subagent (nest the subagent under them)
 
 
 def _id() -> str:
@@ -232,6 +233,8 @@ class Tracer:
                       tool_input=self.redactor.scrub(f.get("tool_input") or {}), started_at=at)
         t.tool_calls[key] = tc
         t.tool_order.append(key)
+        if tc.tool_name in AGENT_TOOLS:
+            t.last_agent_tool = tc.call_id      # its subagent will nest under this call
         attrs = {"kind": "tool", "tool_name": tc.tool_name, "harness": self.profile.name}
         if partial:
             attrs["partial"] = True          # harness has no pre-tool hook
@@ -261,9 +264,12 @@ class Tracer:
         inputs = {"agent_type": atype}
         if task is not None:
             inputs["task"] = self.redactor.scrub(task)
+        # nest under the Agent/Task tool that spawned it (it holds the prompt); the
+        # platform gives no id link, so use the turn's most recent launcher tool
+        parent = t.last_agent_tool or t.call_id
         self.sink.start(WeaveCall(
             id=cid, trace_id=s.trace_id, op_name=f"{NS}.agent.{atype}",
-            started_at=at, parent_id=t.call_id, inputs=inputs,
+            started_at=at, parent_id=parent, inputs=inputs,
             attributes={NS: {"kind": "subagent", "agent_type": atype, "agent_id": aid,
                              "spawning_tool_use_id": spawn}},
         ))

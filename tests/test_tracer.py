@@ -185,8 +185,8 @@ def test_subagent_interior_tool_nests_under_subagent():
     agent = one(sink, f"{NS}.agent.Explore")
     launcher = [c for c in starts(sink) if c.op_name == f"{NS}.tool.Agent"][0]
     inner = [c for c in starts(sink) if c.op_name == f"{NS}.tool.Bash"][0]
-    assert launcher.parent_id == turn.id          # launcher is under the turn
-    assert agent.parent_id == turn.id             # subagent span under the turn
+    assert launcher.parent_id == turn.id          # launcher tool is under the turn
+    assert agent.parent_id == launcher.id         # subagent nests under the launcher tool
     assert inner.parent_id == agent.id            # interior tool under the subagent
     assert end_of(sink, agent.id).output == "done"
 

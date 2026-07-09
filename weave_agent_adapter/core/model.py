@@ -98,6 +98,7 @@ class Turn:
     tool_order: list = field(default_factory=list)   # preserves emission order
     steering: list = field(default_factory=list)
     subagents: dict = field(default_factory=dict)    # agent_id -> open subagent span
+    last_agent_tool: Optional[str] = None            # call_id of the most recent Agent/Task tool
     ended_at: Optional[float] = None
     status: TurnStatus = TurnStatus.OPEN
 
