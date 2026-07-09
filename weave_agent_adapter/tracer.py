@@ -1,19 +1,19 @@
-"""Event → span reducer (specs 01, 05, 06).
+"""Event → turn reducer (specs 01, 05).
 
-Turns normalized hook events into a nested tree of `WeaveCall` start/end
-emissions on a `Sink`. Holds per-session state in memory; all harness-specific
-knowledge stays in the `Profile`. Canonical actions handled: session, turn,
-tool (pre/post/error), permission (request/denied), subagent (start/stop),
-compaction. A harness maps only the events it emits, missing ones degrade
-gracefully (e.g. stop-only subagents annotate rather than span).
+Reduces normalized hook events into the in-memory domain model (Session/Turn/
+ToolCall) and hands each *finalized* turn to the configured turn emitters. A
+turn finalizes when the next turn starts or the session ends/sweeps — not at
+turn_end — because subagents can keep reporting work after the harness's Stop.
 
-Timing: every emission's time comes from the event's `captured_at`.
-Correlation (spec 05): tool calls key off the profile's `tool_use_id` field
-when present, else fall back to the last still-running tool (LIFO). The
-transcript-based fallback is deferred until M0 confirms the payload schema.
+All harness knowledge lives in the `Profile` (event/field mapping, subagent
+launcher tools, thread-id derivation). Canonical actions: session, turn, tool
+(pre/post/error), permission (request/denied), subagent (start/stop),
+compaction. A harness maps only the events it emits; missing ones degrade
+gracefully (no session_end -> sweep closes; no tool_pre -> span synthesized
+from the completion; no subagent_start -> record created at first sight).
 
-Provisional field names (confirmed/adjusted via M0, and only in the profile):
-`prompt`, `tool_output`, `tool_use_id`, `denial_reason`.
+Timing comes from the events' `captured_at`. Correlation (spec 05): tool calls
+key off `tool_use_id` when present, else the last still-running tool (LIFO).
 """
 from __future__ import annotations
 
@@ -21,33 +21,26 @@ import hashlib
 import json
 import os
 import re
-import uuid
 
 from .core.model import (
-    Decision, Permission, Session, SessionStatus, Steering,
-    SteeringKind, ToolCall, ToolStatus, Turn, TurnStatus, WeaveCall,
+    Decision, Permission, Session, Steering, SteeringKind, ToolCall, ToolStatus, Turn,
 )
-from .core.sink import Sink
+from .enrich import make_enricher
 from .profile import Profile
 from .redact import Redactor
 
-NS = "weave_agent_adapter"
-
-
-def _id() -> str:
-    return str(uuid.uuid4())          # Weave requires round-trippable UUID ids
-
 
 class Tracer:
-    def __init__(self, profile: Profile, project: str, sink: Sink,
+    def __init__(self, profile: Profile, project: str, turn_emitters: list = None,
                  redactor: Redactor = None, session_rate: float = 1.0,
                  project_per_repo: bool = False) -> None:
         self.profile = profile
         self.project = project
-        self.sink = sink
+        self.turn_emitters = turn_emitters or []
         self.redactor = redactor or Redactor()
         self.session_rate = session_rate
         self.project_per_repo = project_per_repo
+        self.enricher = make_enricher(profile.enrich, self.redactor)
         self.sessions: dict[str, Session] = {}
 
     def _project_for(self, cwd) -> str:
@@ -82,6 +75,12 @@ class Tracer:
         # turns/tools/subagents aren't silently dropped.
         if canonical != "session_start" and sid not in self.sessions:
             self._on_session_start(sid, fields, wire.captured_at)
+            if canonical != "turn_start":
+                s = self.sessions.get(sid)
+                if s and s.current_turn is None:
+                    s.current_turn = Turn(index=s.turn_count, started_at=wire.captured_at,
+                                          input_text="(resumed)")
+                    s.turn_count += 1
         handler = getattr(self, f"_on_{canonical}", None)
         if handler:
             handler(sid, fields, wire.captured_at)
@@ -96,60 +95,13 @@ class Tracer:
             return
         cwd = f.get("cwd")
         s = Session(
-            session_id=sid, trace_id=_id(), root_call_id=_id(), project=self._project_for(cwd),
-            started_at=at, last_activity=at,
+            session_id=sid, project=self._project_for(cwd), started_at=at,
+            last_activity=at, harness=self.profile.name,
             permission_mode=f.get("permission_mode"), cwd=cwd, transcript=f.get("transcript"),
         )
         if self.profile.thread.get("source") == "field":
             s.thread_id = f.get(self.profile.thread.get("id_field"))
         self.sessions[sid] = s
-        # the session span is emitted lazily on the first turn (see _ensure_session):
-        # Claude Code opens many turn-less sessions (background suggestion/title
-        # agents, resumes, quick opens) we don't want cluttering the dashboard.
-
-    def _thread_of(self, s: Session) -> Optional[str]:
-        # The conversation id (Weave thread_id) links forks/resumes. How to get it
-        # is per-harness, declared in the profile's [thread] section:
-        #   source = "field"            -> a [fields] value carries it (resolved at
-        #                                  session start); nothing to do here.
-        #   source = "transcript_root"  -> the id of the conversation's first message,
-        #                                  copied verbatim into every fork. Read the
-        #                                  transcript once: first row not skipped and
-        #                                  carrying id_key. Streamed + capped.
-        #   (absent / other)            -> no thread linking.
-        if s.thread_id is not None:
-            return s.thread_id
-        cfg = self.profile.thread
-        if cfg.get("source") == "transcript_root" and s.transcript:
-            skip_field = cfg.get("skip_field", "isSidechain")
-            id_key = cfg.get("id_key", "uuid")
-            try:
-                with open(s.transcript) as fh:
-                    for i, line in enumerate(fh):
-                        if i >= 50:               # bound the scan; the first message is at the top
-                            break
-                        line = line.strip()
-                        if not line:
-                            continue
-                        r = json.loads(line)
-                        if not r.get(skip_field) and r.get(id_key):
-                            s.thread_id = r.get(id_key)
-                            break
-            except Exception:
-                pass
-        return s.thread_id
-
-    def _ensure_session(self, s: Session) -> None:
-        if s.emitted:
-            return
-        s.emitted = True
-        self.sink.start(WeaveCall(
-            id=s.root_call_id, trace_id=s.trace_id, op_name=f"{NS}.session",
-            started_at=s.started_at, parent_id=None, inputs={"session_id": s.session_id},
-            project=s.project, thread_id=self._thread_of(s),
-            attributes={NS: {"kind": "session", "harness": self.profile.name,
-                             "permission_mode": s.permission_mode, "cwd": s.cwd}},
-        ))
 
     def _on_session_end(self, sid, f, at) -> None:
         s = self.sessions.pop(sid, None)
@@ -157,22 +109,16 @@ class Tracer:
             self._finalize(s, at)
 
     def _finalize(self, s: Session, at, incomplete: bool = False) -> None:
-        if not s.emitted:
-            return                            # no turns ever -> never surfaced, drop it
-        self._close_turn(s, at)
-        s.status = SessionStatus.CLOSED
-        out = {"turn_count": s.turn_count, "status": s.status.value}
-        if incomplete:
-            out["incomplete"] = True          # swept: no session_end ever arrived
-        self.sink.end(WeaveCall(
-            id=s.root_call_id, trace_id=s.trace_id, op_name=f"{NS}.session",
-            started_at=s.started_at, ended_at=at, output=out, project=s.project,
-        ))
+        t = s.current_turn
+        if t and t.open:
+            t.incomplete = incomplete
+            self._close_turn(s, at)
+        self._emit_pending_turn(s)
 
     def sweep(self, now: float, ttl: float) -> int:
         """Finalize sessions idle past `ttl` (a harness that crashed before
-        session_end), so state can't grow without bound and the trace closes
-        rather than dangling. Returns how many were swept."""
+        session_end), so state can't grow without bound and the pending turn
+        still reaches the emitters. Returns how many were swept."""
         stale = [sid for sid, s in self.sessions.items() if now - s.last_activity > ttl]
         for sid in stale:
             s = self.sessions.pop(sid)
@@ -191,19 +137,12 @@ class Tracer:
         prompt = self.redactor.scrub(f.get("prompt"), "prompt")
         if s.current_turn and s.current_turn.open:
             # a user message mid-turn is steering, not a new turn
-            self._emit_steering(s, at, SteeringKind.INTERJECTION, text=prompt)
+            s.current_turn.steering.append(
+                Steering(kind=SteeringKind.INTERJECTION, at=at, text=prompt))
             return
-        self._ensure_session(s)               # first real turn -> surface the session
-        t = Turn(call_id=_id(), index=s.turn_count, started_at=at, input_text=prompt)
-        s.current_turn = t
+        self._emit_pending_turn(s)            # previous turn is final once the next begins
+        s.current_turn = Turn(index=s.turn_count, started_at=at, input_text=prompt)
         s.turn_count += 1
-        self.sink.start(WeaveCall(
-            id=t.call_id, trace_id=s.trace_id, op_name=f"{NS}.turn", started_at=at,
-            parent_id=s.root_call_id, inputs={"prompt": t.input_text}, thread_id=s.thread_id,
-            attributes={NS: {"kind": "turn", "index": t.index}},
-        ))
-        self._instant(s, t.call_id, f"{NS}.input", at,
-                      inputs={"prompt": t.input_text}, attrs={"kind": "input"})
 
     def _on_turn_end(self, sid, f, at) -> None:
         s = self.sessions.get(sid)
@@ -217,82 +156,101 @@ class Tracer:
         t = s.current_turn
         if not t or not t.open:
             return
-        self._instant(s, t.call_id, f"{NS}.stop", at, attrs={"kind": "stop"})
         t.open = False
         t.ended_at = at
-        t.status = TurnStatus.CLOSED
-        self.sink.end(WeaveCall(
-            id=t.call_id, trace_id=s.trace_id, op_name=f"{NS}.turn",
-            started_at=t.started_at, ended_at=at,
-            output={"assistant": t.output_text, "status": t.status.value,
-                    "tool_count": len(t.tool_order), "had_steering": bool(t.steering)},
-        ))
+        # NOT emitted yet: subagents can finish after the harness's Stop, so the
+        # turn stays pending until the next turn starts or the session finalizes.
+
+    def _emit_pending_turn(self, s: Session) -> None:
+        t = s.current_turn
+        if not t or t.open or t.emitted:
+            return
+        t.emitted = True
+        self._thread_of(s)                    # resolve the conversation id once
+        if self.enricher:
+            try:
+                self.enricher.enrich_turn(t, s)   # LLM-call internals from the transcript
+            except Exception:
+                pass
+        for e in self.turn_emitters:
+            try:
+                e.emit_turn(t, s)
+            except Exception:
+                pass                          # an emitter must never break the reducer
+
+    def finalize_idle_turns(self, now: float, linger: float) -> int:
+        """Emit closed-but-pending turns whose session has been quiet for
+        `linger` seconds — so a conversation's LAST turn appears promptly
+        instead of waiting for session end or the sweep. Async subagent work
+        resets last_activity, so lingering turns still absorb it."""
+        n = 0
+        for s in self.sessions.values():
+            t = s.current_turn
+            if t and not t.open and not t.emitted and now - s.last_activity > linger:
+                self._emit_pending_turn(s)
+                n += 1
+        return n
+
+    def _thread_of(self, s: Session):
+        # The conversation id links forks/resumes. How to get it is per-harness,
+        # declared in the profile's [thread] section:
+        #   source = "field"            -> a [fields] value carries it (resolved at
+        #                                  session start); nothing to do here.
+        #   source = "transcript_root"  -> the id of the conversation's first message,
+        #                                  copied verbatim into every fork. Read the
+        #                                  transcript once: first row not skipped and
+        #                                  carrying id_key. Streamed + capped.
+        #   (absent / other)            -> no thread linking.
+        if s.thread_id is not None:
+            return s.thread_id
+        cfg = self.profile.thread
+        if cfg.get("source") == "transcript_root" and s.transcript:
+            skip_field = cfg.get("skip_field", "isSidechain")
+            id_key = cfg.get("id_key", "uuid")
+            try:
+                with open(s.transcript) as fh:
+                    for i, line in enumerate(fh):
+                        if i >= 50:           # bound the scan; the first message is at the top
+                            break
+                        line = line.strip()
+                        if not line:
+                            continue
+                        r = json.loads(line)
+                        if not r.get(skip_field) and r.get(id_key):
+                            s.thread_id = r.get(id_key)
+                            break
+            except Exception:
+                pass
+        return s.thread_id
 
     # ------- tools -------
 
     def _on_tool_pre(self, sid, f, at) -> None:
         s = self.sessions.get(sid)
         if s and s.current_turn:
-            self._open_tool(s, f, at)
+            self._open_tool(s.current_turn, f, at)
 
-    def _open_tool(self, s, f, at, partial=False) -> ToolCall:
-        t = s.current_turn
+    def _open_tool(self, t: Turn, f, at) -> ToolCall:
         key = f.get("tool_use_id") or f"_synth:{f.get('tool_name')}:{len(t.tool_order)}"
-        tc = ToolCall(correlation_key=key, call_id=_id(),
-                      tool_name=f.get("tool_name", "tool"),
-                      tool_input=self.redactor.scrub(f.get("tool_input") or {}), started_at=at)
+        tc = ToolCall(correlation_key=key, tool_name=f.get("tool_name", "tool"),
+                      tool_input=self.redactor.scrub(f.get("tool_input") or {}),
+                      started_at=at, agent_id=f.get("agent_id"))
         t.tool_calls[key] = tc
         t.tool_order.append(key)
-        if tc.tool_name in self.profile.agent_tools:
-            t.last_agent_tool = tc.call_id      # its subagent will nest under this call
-        attrs = {"kind": "tool", "tool_name": tc.tool_name, "harness": self.profile.name}
-        if partial:
-            attrs["partial"] = True          # harness has no pre-tool hook
-        self.sink.start(WeaveCall(
-            id=tc.call_id, trace_id=s.trace_id, op_name=f"{NS}.tool.{tc.tool_name}",
-            started_at=at, parent_id=self._tool_parent(s, t, f, at),
-            inputs={"tool_name": tc.tool_name, "tool_input": tc.tool_input},
-            attributes={NS: attrs},
-        ))
+        if tc.agent_id and tc.agent_id not in t.subagents:
+            # interior tool seen before any subagent_start (Claude Code emits none):
+            # materialize the subagent record so the tool has a home
+            self._open_subagent(t, tc.agent_id, f.get("agent_type") or "agent", at)
         return tc
 
-    def _tool_parent(self, s, t, f, at) -> str:
-        # a tool run inside a subagent carries that subagent's agent_id -> nest it
-        # under the subagent span (lazily opened if the harness has no start event)
-        aid = f.get("agent_id")
-        if not aid:
-            return t.call_id
-        rec = t.subagents.get(aid)
-        if rec is None:
-            rec = self._open_subagent(s, t, aid, f.get("agent_type") or "agent", at)
-        return rec["call_id"]
-
-    def _open_subagent(self, s, t, aid, atype, at, task=None, spawn=None) -> dict:
-        cid = _id()
-        rec = {"call_id": cid, "started_at": at, "type": atype}
-        t.subagents[aid] = rec
-        inputs = {"agent_type": atype}
-        if task is not None:
-            inputs["task"] = self.redactor.scrub(task)
-        # nest under the Agent/Task tool that spawned it (it holds the prompt); the
-        # platform gives no id link, so use the turn's most recent launcher tool
-        parent = t.last_agent_tool or t.call_id
-        self.sink.start(WeaveCall(
-            id=cid, trace_id=s.trace_id, op_name=f"{NS}.agent.{atype}",
-            started_at=at, parent_id=parent, inputs=inputs,
-            attributes={NS: {"kind": "subagent", "agent_type": atype, "agent_id": aid,
-                             "spawning_tool_use_id": spawn}},
-        ))
-        return rec
-
     def _on_permission_request(self, sid, f, at) -> None:
-        # recorded on the tool (prompt shown), not a span of its own
-        s, tc = self._locate_tool(sid, f)
+        # recorded on the tool (prompt shown), not an event of its own
+        _, tc = self._locate_tool(sid, f)
         if tc:
             tc.permission = Permission(requested_at=at)
 
     def _on_permission_denied(self, sid, f, at) -> None:
-        s, tc = self._locate_tool(sid, f)
+        _, tc = self._locate_tool(sid, f)
         if not tc:
             return
         p = tc.permission or Permission()
@@ -300,13 +258,6 @@ class Tracer:
         tc.permission = p
         tc.status = ToolStatus.REJECTED
         tc.ended_at = at
-        self.sink.end(WeaveCall(
-            id=tc.call_id, trace_id=s.trace_id, op_name=f"{NS}.tool.{tc.tool_name}",
-            started_at=tc.started_at, ended_at=at, output=None,
-            attributes={NS: {"status": "rejected", "permission_decision": "deny",
-                             "denial_reason": p.reason,
-                             "prompt_shown": p.requested_at is not None}},
-        ))
 
     def _on_tool_post(self, sid, f, at) -> None:
         self._finish_tool(sid, f, at, ok=True)
@@ -320,35 +271,33 @@ class Tracer:
             return
         if tc is None:
             # fallback for a bring-your-own harness whose hook system has no
-            # pre-tool event: reconstruct the span from the completion alone
-            tc = self._open_tool(s, f, at, partial=True)
+            # pre-tool event: reconstruct the tool from the completion alone
+            tc = self._open_tool(s.current_turn, f, at)
         elif tc.status != ToolStatus.RUNNING:
             return
         # approval is inferred: a tool that ran was allowed
-        prompted = bool(tc.permission and tc.permission.requested_at)
         if tc.permission:
             tc.permission.decision = Decision.ALLOW
         tc.status = ToolStatus.OK if ok else ToolStatus.ERROR
         tc.ended_at = at
         tc.output = self.redactor.scrub(f.get("tool_output")) if ok else None
         tc.error = None if ok else self.redactor.scrub(f.get("tool_output") or "error")
-        self.sink.end(WeaveCall(
-            id=tc.call_id, trace_id=s.trace_id, op_name=f"{NS}.tool.{tc.tool_name}",
-            started_at=tc.started_at, ended_at=at, output=tc.output, exception=tc.error,
-            attributes={NS: {"status": tc.status.value, "permission_decision": "allow",
-                             "permission_source": "user" if prompted else "auto",
-                             "prompt_shown": prompted}},
-        ))
 
     # ------- subagents & compaction -------
+
+    def _open_subagent(self, t: Turn, aid, atype, at, output=None, open=True) -> dict:
+        rec = {"agent_id": aid, "type": atype, "started_at": at,
+               "open": open, "ended_at": None if open else at, "output": output}
+        t.subagents[aid] = rec
+        return rec
 
     def _on_subagent_start(self, sid, f, at) -> None:
         s = self.sessions.get(sid)
         if not s or not s.current_turn:
             return
-        self._open_subagent(s, s.current_turn, f.get("agent_id") or _id(),
-                            f.get("agent_type") or "agent", at,
-                            task=f.get("agent_task"), spawn=f.get("tool_use_id"))
+        aid = f.get("agent_id")
+        if aid and aid not in s.current_turn.subagents:
+            self._open_subagent(s.current_turn, aid, f.get("agent_type") or "agent", at)
 
     def _on_subagent_stop(self, sid, f, at) -> None:
         s = self.sessions.get(sid)
@@ -356,45 +305,24 @@ class Tracer:
             return
         t = s.current_turn
         aid = f.get("agent_id")
-        # match strictly by agent_id. No LIFO fallback: a background SubagentStop
-        # (different agent_id) would otherwise pop and close a real subagent early,
-        # splitting its tools across two spans.
-        rec = t.subagents.pop(aid, None) if aid else None
-        if rec is None and not f.get("agent_type"):
-            # a SubagentStop we never tracked and with no agent_type is Claude Code's
-            # own background agent (prompt-suggestion / title generation), not a user
-            # subagent. Skip it so it doesn't show as a spurious empty `agent` span.
-            return
-        atype = (rec["type"] if rec else f.get("agent_type")) or "agent"
-        aid = aid or f.get("agent_id")
-        started = rec["started_at"] if rec else at   # stop-only: zero-duration marker
-        cid = rec["call_id"] if rec else _id()
+        # match strictly by agent_id; no LIFO fallback (a background SubagentStop
+        # with a different agent_id would close a real subagent early)
+        rec = t.subagents.get(aid) if aid else None
+        if rec is not None and not rec["open"]:
+            return                            # already closed; a repeat stop is noise
         if rec is None:
-            # stop-only (e.g. Claude Code has no SubagentStart): a bare marker with
-            # the subagent's identity. We do NOT record last_assistant_message here:
-            # on the stop-only path it isn't reliably the subagent's own reply.
-            self.sink.start(WeaveCall(
-                id=cid, trace_id=s.trace_id, op_name=f"{NS}.agent.{atype}",
-                started_at=started, parent_id=t.call_id,
-                inputs={"agent_type": atype, "agent_id": aid},
-                attributes={NS: {"kind": "subagent", "phase": "stop", "agent_type": atype}},
-            ))
-        # output only when we tracked the span's start (interior tools / SubagentStart)
-        output = self.redactor.scrub(f.get("agent_output")) if rec is not None else None
-        self.sink.end(WeaveCall(
-            id=cid, trace_id=s.trace_id, op_name=f"{NS}.agent.{atype}",
-            started_at=started, ended_at=at, output=output,
-            attributes={NS: {"status": "ok"}},
-        ))
+            if not aid or not f.get("agent_type"):
+                return
+            self._open_subagent(t, aid, f.get("agent_type"), at, open=False)
+            return
+        rec["open"] = False
+        rec["ended_at"] = at
+        rec["output"] = self.redactor.scrub(f.get("agent_output"))
 
     def _on_compaction(self, sid, f, at) -> None:
-        # context compaction is session-level: annotate under the root
         s = self.sessions.get(sid)
-        if not s:
-            return
-        self._ensure_session(s)
-        self._instant(s, s.root_call_id, f"{NS}.compaction", at,
-                      attrs={"kind": "compaction", "trigger": f.get("compaction_trigger")})
+        if s and s.current_turn:
+            s.current_turn.compactions.append((at, f.get("compaction_trigger")))
 
     # ------- helpers -------
 
@@ -410,20 +338,3 @@ class Tracer:
             if t.tool_calls[k].status == ToolStatus.RUNNING:
                 return s, t.tool_calls[k]
         return s, None
-
-    def _emit_steering(self, s, at, kind, text=None) -> None:
-        t = s.current_turn
-        if not t:
-            return
-        t.steering.append(Steering(kind=kind, at=at, text=text))
-        self._instant(s, t.call_id, f"{NS}.steering", at,
-                      inputs={"text": text} if text else {},
-                      attrs={"kind": "steering", "steering_kind": kind.value})
-
-    def _instant(self, s, parent_id, op_name, at, inputs=None, attrs=None) -> None:
-        cid = _id()
-        self.sink.start(WeaveCall(id=cid, trace_id=s.trace_id, op_name=op_name, started_at=at,
-                                  parent_id=parent_id, inputs=inputs or {},
-                                  attributes={NS: attrs or {}}))
-        self.sink.end(WeaveCall(id=cid, trace_id=s.trace_id, op_name=op_name,
-                                started_at=at, ended_at=at))

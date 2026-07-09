@@ -6,23 +6,22 @@ Point it at **any** harness with a hook-like system, closed source, open source,
 
 ## What it captures
 
-A session becomes one Weave trace, nested to match what actually happened:
+Each turn becomes one trace, stitched into its conversation, nested to match what actually happened:
 
 ```
-session
-└── turn                     "add logging to auth.py"
-    ├── input                the prompt
-    ├── tool:Bash            approved (auto)
-    ├── tool:Edit            rejected, deny "use the logger, not print"
-    ├── steering             user redirect mid-turn
-    └── tool:Edit            approved (user)
+invoke_agent claude-code     "add logging to auth.py" -> "done, wired the logger"
+├── chat claude-opus-4       1.2k in / 80 out tokens
+├── execute_tool Bash        approved (auto)
+├── execute_tool Edit        rejected, deny "use the logger, not print"
+├── invoke_agent Explore     subagent, its tools nested inside
+└── execute_tool Edit        approved (user)
 ```
 
-Beyond the call tree, it records the human-in-the-loop signals: approval, rejection, and steering.
+Beyond the trace tree, it records the human-in-the-loop signals — approval, rejection, and mid-turn steering — and links forked/resumed sessions into one conversation.
 
 ## Quickstart
 
-Install (the `sidecar` extra pulls in Weave; the hook itself is stdlib-only):
+Install (the `sidecar` extra pulls in wandb + OpenTelemetry; the hook itself is stdlib-only):
 
 ```bash
 pip install "weave-agent-adapter[sidecar]"
@@ -59,7 +58,7 @@ weave-agent-adapter uninstall [--harness codex]
 The harness is never modified.
 
 - Hooks (external one-line commands, auto-registered) emit each event to a local socket and exit immediately.
-- A sidecar, spawned at session start as one warm process per machine, hosts a single `weave.init()` client and turns events into nested Weave calls. A long-lived process is what lets the SDK's async batching and retry apply, and keeps spans in Weave's native call model rather than raw OTel JSON.
+- A sidecar, spawned at session start as one warm process per machine, reduces the event stream into turns (with their tools, subagents, permissions, and steering) and emits each finalized turn as one OTel GenAI trace: `invoke_agent` root, `execute_tool` children, nested subagents. Turns are stitched into conversations by a fork-stable conversation id, which is exactly what Weave's agents UI (Conversations/Spans) and Signals run on.
 
 Adopters write zero lines of code: installing the hooks registers everything.
 
@@ -92,8 +91,8 @@ tool_output = "tool_response"
 tool_use_id = "tool_use_id"     # per-tool-call correlation id, if the harness has one
 cwd         = "cwd"
 
-[subagents]                     # optional; omit and subagents just nest under the turn
-launcher_tools = ["Agent"]      # tool calls that spawn a subagent (the subagent nests under them)
+[enrich]                        # optional; LLM-call internals (chat spans, tokens) from the harness's transcript
+source = "claude-transcript"    # named strategy; omit if the harness has no transcript
 
 [thread]                        # optional; how to link forked/resumed sessions into one thread
 source   = "field"              # "field" | "transcript_root" | omit for none
@@ -109,7 +108,7 @@ command    = "weave-agent-adapter hook --harness myharness"
 events     = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"]
 ```
 
-Map only the events your harness emits. Missing ones — and the optional `[subagents]`/`[thread]` sections — degrade gracefully: no session-end event → sessions close via the idle sweep; no pre-tool event → the span is synthesized from the completion; no `[subagents]` → subagents nest under the turn; no `[thread]` → sessions aren't thread-linked. Nothing is Claude-specific in the core: tool names and thread derivation are declared here, not hardcoded.
+Map only the events your harness emits. Missing ones — and the optional `[enrich]`/`[thread]` sections — degrade gracefully: no session-end event → sessions finalize via the idle sweep; no pre-tool event → the tool is synthesized from the completion; no `[enrich]` → no chat spans/tokens; no `[thread]` → sessions aren't linked into conversations. Nothing is Claude-specific in the core: tool names and thread derivation are declared here, not hardcoded.
 
 `install` merges the hooks into the file named by `user_path` (or `local_path` with `--local`), preserving any other keys already there; `uninstall` removes only our entries. Any harness whose hook file uses the standard `{"hooks": {event: [...]}}` shape (Claude Code's `settings.json`, Codex's `hooks.json`, and most command-hook systems) works with no installer code changes.
 

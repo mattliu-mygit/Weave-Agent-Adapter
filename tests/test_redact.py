@@ -31,8 +31,9 @@ def test_disabled_passes_through():
     assert r.scrub({"api_key": "secret"}) == {"api_key": "secret"}
 
 
-def test_custom_deny_keys():
+def test_custom_deny_keys_extend_defaults():
     r = Redactor(deny_keys={"ssn"})
-    out = r.scrub({"ssn": "123", "api_key": "kept-because-not-in-custom-list"})
+    out = r.scrub({"ssn": "123", "api_key": "also-denied", "command": "ls"})
     assert out["ssn"] == REDACTED
-    assert out["api_key"] == "kept-because-not-in-custom-list"
+    assert out["api_key"] == REDACTED       # defaults still active
+    assert out["command"] == "ls"

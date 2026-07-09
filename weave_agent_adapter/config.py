@@ -26,14 +26,12 @@ class Config:
     active_harness: str = "claude-code"
     project: str = "weave-agent-adapter"   # "entity/project" or bare "project"
     project_per_repo: bool = False         # trace each repo (cwd leaf) to its own project
-    genai_turns: bool = False              # dual-emit turns as OTel GenAI traces (Signals plane)
-    enable_disk_fallback: bool = True      # SDK dead-letter log for sends that fail after retries
     redact_enabled: bool = True
     redact_keys: list = None               # None -> Redactor defaults
     session_rate: float = 1.0
-    granularity: str = "session"
     idle_shutdown_s: float = 120.0
     session_ttl_s: float = 3600.0          # drop sessions idle past this (crash safety)
+    turn_linger_s: float = 120.0           # finalize a closed turn after this much quiet
 
 
 def _load_file(path: str) -> dict:
@@ -51,7 +49,6 @@ def load_config(path=None) -> Config:
     weave = d.get("weave", {})
     red = d.get("redaction", {})
     samp = d.get("sampling", {})
-    trace = d.get("trace", {})
     side = d.get("sidecar", {})
     c = Config()
 
@@ -61,13 +58,11 @@ def load_config(path=None) -> Config:
     if entity and "/" not in c.project:
         c.project = f"{entity}/{c.project}"
     c.project_per_repo = bool(weave.get("project_per_repo", c.project_per_repo))
-    c.genai_turns = bool(weave.get("genai_turns", c.genai_turns))
-    c.enable_disk_fallback = bool(weave.get("enable_disk_fallback", c.enable_disk_fallback))
     c.redact_enabled = bool(red.get("enabled", c.redact_enabled))
     c.redact_keys = red.get("redact_keys", None)
     c.session_rate = float(samp.get("session_rate", c.session_rate))
-    c.granularity = trace.get("granularity", c.granularity)
     c.idle_shutdown_s = float(os.environ.get("WEAVE_AGENT_ADAPTER_IDLE_S",
                                              side.get("idle_shutdown_s", c.idle_shutdown_s)))
     c.session_ttl_s = float(side.get("session_ttl_s", c.session_ttl_s))
+    c.turn_linger_s = float(side.get("turn_linger_s", c.turn_linger_s))
     return c

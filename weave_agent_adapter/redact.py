@@ -30,7 +30,7 @@ _PATTERNS = [
 
 class Redactor:
     def __init__(self, deny_keys=None, enabled: bool = True):
-        keys = DEFAULT_DENY_KEYS if deny_keys is None else deny_keys
+        keys = DEFAULT_DENY_KEYS | set(deny_keys) if deny_keys is not None else DEFAULT_DENY_KEYS
         self.deny = {k.lower() for k in keys}
         self.enabled = enabled
 

@@ -78,46 +78,35 @@ def cmd_hook(args) -> int:
 
 def cmd_sidecar(args) -> int:
     from .config import load_config
+    from .emit import GenAITurnEmitter
     from .redact import Redactor
     from .sidecar import Sidecar
 
     cfg = load_config(args.config)
     project = args.project or cfg.project
-    os.environ.setdefault(
-        "WEAVE_ENABLE_DISK_FALLBACK", "true" if cfg.enable_disk_fallback else "false"
-    )
 
     debug_file = args.debug_file or os.environ.get("WEAVE_AGENT_ADAPTER_DEBUG_FILE")
     if debug_file:
-        from .sinks.debug import DebugSink
-        sink = DebugSink(debug_file)
+        # render the same turn trees, but append them to a local file instead
+        def _to_file(node, project_id, _path=debug_file):
+            with open(_path, "a") as fh:
+                fh.write(json.dumps({"project": project_id, "turn": node}, default=str) + "\n")
+        turn_emitters = [GenAITurnEmitter(emit=_to_file)]
     else:
-        from .sinks.weave import WeaveSink
-
-        def make(p):
-            ws = WeaveSink(p)
-            if not cfg.genai_turns:
-                return ws
-            from .sinks.genai import GenAISink
-            from .sinks.tee import TeeSink
-            return TeeSink([ws, GenAISink(ws.project_id)])
-
-        if cfg.project_per_repo:
-            from .sinks.routing import RoutingSink
-            sink = RoutingSink(make, default_project=project)
-        else:
-            sink = make(project)
+        turn_emitters = [GenAITurnEmitter()]
 
     redactor = Redactor(deny_keys=cfg.redact_keys, enabled=cfg.redact_enabled)
-    sc = Sidecar(sink, project, transport.SOCKET_PATH, profiles_dir=args.profiles_dir,
+    sc = Sidecar(project, transport.SOCKET_PATH, profiles_dir=args.profiles_dir,
                  idle_s=cfg.idle_shutdown_s, redactor=redactor, session_rate=cfg.session_rate,
-                 session_ttl=cfg.session_ttl_s, project_per_repo=cfg.project_per_repo)
+                 session_ttl=cfg.session_ttl_s, project_per_repo=cfg.project_per_repo,
+                 turn_emitters=turn_emitters, turn_linger=cfg.turn_linger_s)
     signal.signal(signal.SIGTERM, lambda *_: sc.stop())
     signal.signal(signal.SIGINT, lambda *_: sc.stop())
     try:
         sc.serve()
     finally:
-        sink.flush()
+        for e in turn_emitters:
+            e.flush()
     return 0
 
 

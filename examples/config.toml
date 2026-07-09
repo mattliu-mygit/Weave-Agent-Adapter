@@ -8,7 +8,6 @@ entity  = "your-entity"
 project = "claude-code"                # default project (also the fallback when a session has no cwd)
 project_per_repo = false               # true: trace each repo to its own project (named after the cwd leaf)
 # WANDB_API_KEY is read from the environment, never put secrets in this file.
-enable_disk_fallback = true            # dead-letter log for sends that fail after retries (WEAVE_ENABLE_DISK_FALLBACK)
 
 [redaction]
 enabled     = true                     # scrub secrets before sending (default true)
@@ -17,9 +16,7 @@ redact_keys = ["api_key", "authorization", "token", "password"]  # extra deny ke
 [sampling]
 session_rate = 1.0                     # fraction of sessions traced (root-only)
 
-[trace]
-granularity = "session"                # "session" = one trace per session; or "turn"
-
 [sidecar]
 idle_shutdown_s = 120                  # exit after this long with no active sessions
 session_ttl_s   = 3600                 # finalize + drop a session idle this long (crash safety)
+turn_linger_s   = 120                  # finalize a closed turn after this much quiet

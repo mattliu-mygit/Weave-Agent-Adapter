@@ -1,37 +1,37 @@
-"""Reducer behavior: the event stream → span tree, permissions, sweep."""
+"""Reducer behavior: event stream → finalized turns, sessions, sweep, threads."""
 from __future__ import annotations
 
-from conftest import NS, run, starts, ends, one, end_of
-from weave_agent_adapter.redact import Redactor
+import json
+
+from conftest import NS, run, subagents_of, tools_of
+from weave_agent_adapter.core.model import ToolStatus
 
 SID = "s1"
 
 
-def test_session_turn_tool_nesting():
-    tr, sink = run([
+def test_turn_finalized_on_session_end():
+    tr, turns = run([
         ("SessionStart", {"session_id": SID, "cwd": "/repo"}),
         ("UserPromptSubmit", {"session_id": SID, "prompt": "do it"}),
         ("PreToolUse", {"session_id": SID, "tool_name": "Bash", "tool_use_id": "t1",
                         "tool_input": {"command": "ls"}}),
         ("PostToolUse", {"session_id": SID, "tool_name": "Bash", "tool_use_id": "t1",
                          "tool_response": {"stdout": "ok"}}),
-        ("Stop", {"session_id": SID}),
+        ("Stop", {"session_id": SID, "last_assistant_message": "done"}),
         ("SessionEnd", {"session_id": SID}),
     ])
-    session = one(sink, f"{NS}.session")
-    turn = one(sink, f"{NS}.turn")
-    tool = one(sink, f"{NS}.tool.Bash")
-    assert session.parent_id is None
-    assert turn.parent_id == session.id
-    assert tool.parent_id == turn.id
-    # session closed with a turn count
-    assert end_of(sink, session.id).output["turn_count"] == 1
-    assert not tr.sessions            # popped on session_end
+    (node, project_id), = turns
+    assert project_id == "ent/proj"
+    assert node["attributes"]["gen_ai.prompt.0.content"] == "do it"
+    assert node["attributes"]["gen_ai.completion.0.content"] == "done"
+    (tool,) = tools_of(node, "Bash")
+    assert tool["attributes"][f"{NS}.tool.status"] == "ok"
+    assert not tr.sessions                        # popped on session_end
 
 
 def test_tool_correlation_by_use_id():
-    # two tools opened before either closes → close must match by tool_use_id
-    tr, sink = run([
+    # two tools open concurrently -> the close must match by tool_use_id
+    tr, turns = run([
         ("SessionStart", {"session_id": SID}),
         ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
         ("PreToolUse", {"session_id": SID, "tool_name": "Read", "tool_use_id": "a"}),
@@ -39,101 +39,58 @@ def test_tool_correlation_by_use_id():
         ("PostToolUse", {"session_id": SID, "tool_name": "Read", "tool_use_id": "a",
                          "tool_response": {"x": 1}}),
     ])
-    read = one(sink, f"{NS}.tool.Read")
-    assert end_of(sink, read.id) is not None          # 'a' closed
-    bash = one(sink, f"{NS}.tool.Bash")
-    assert end_of(sink, bash.id) is None              # 'b' still open
+    t = tr.sessions[SID].current_turn
+    assert t.tool_calls["a"].status == ToolStatus.OK
+    assert t.tool_calls["b"].status == ToolStatus.RUNNING
 
 
-def test_permission_denied_closes_rejected():
-    tr, sink = run([
-        ("SessionStart", {"session_id": SID}),
-        ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
-        ("PreToolUse", {"session_id": SID, "tool_name": "Bash", "tool_use_id": "t1"}),
-        ("PermissionDenied", {"session_id": SID, "tool_use_id": "t1",
-                              "denial_reason": "nope"}),
-    ])
-    tool = one(sink, f"{NS}.tool.Bash")
-    e = end_of(sink, tool.id)
-    attrs = e.attributes[NS]
-    assert attrs["status"] == "rejected"
-    assert attrs["permission_decision"] == "deny"
-    assert attrs["denial_reason"] == "nope"
-
-
-def test_permission_allow_inferred_from_post():
-    tr, sink = run([
-        ("SessionStart", {"session_id": SID}),
-        ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
-        ("PreToolUse", {"session_id": SID, "tool_name": "Bash", "tool_use_id": "t1"}),
-        ("PostToolUse", {"session_id": SID, "tool_name": "Bash", "tool_use_id": "t1",
-                         "tool_response": {"stdout": "ok"}}),
-    ])
-    e = end_of(sink, one(sink, f"{NS}.tool.Bash").id)
-    assert e.attributes[NS]["permission_decision"] == "allow"
-
-
-def test_turn_captures_prompt_and_assistant_reply():
-    tr, sink = run([
-        ("SessionStart", {"session_id": SID}),
-        ("UserPromptSubmit", {"session_id": SID, "prompt": "add logging"}),
-        ("Stop", {"session_id": SID, "last_assistant_message": "Done, added logging."}),
-    ])
-    turn = one(sink, f"{NS}.turn")
-    assert turn.inputs["prompt"] == "add logging"          # prompt on the turn's input
-    assert end_of(sink, turn.id).output["assistant"] == "Done, added logging."
-    # the input marker still carries the prompt too
-    assert one(sink, f"{NS}.input").inputs["prompt"] == "add logging"
-
-
-def test_project_per_repo_stamps_project_from_cwd():
-    from weave_agent_adapter.profile import load_profile
-    from weave_agent_adapter.sinks.recording import RecordingSink
-    from weave_agent_adapter.tracer import Tracer
-    from weave_agent_adapter.core.model import WireEvent
-    tr = Tracer(load_profile("claude-code"), "default-proj", RecordingSink(),
-                project_per_repo=True)
-    tr.handle(WireEvent(1, "claude-code", "SessionStart", 1.0,
-                        {"session_id": SID, "cwd": "/Users/me/my-repo"}, 1))
-    tr.handle(WireEvent(1, "claude-code", "UserPromptSubmit", 1.5,
-                        {"session_id": SID, "prompt": "hi"}, 1))   # surfaces the session
-    session = one(tr.sink, f"{NS}.session")
-    assert session.project == "my-repo"           # leaf of cwd, not the default
-    # a session with no cwd falls back to the configured default
-    tr.handle(WireEvent(1, "claude-code", "SessionStart", 2.0, {"session_id": "s2"}, 1))
-    tr.handle(WireEvent(1, "claude-code", "UserPromptSubmit", 2.5, {"session_id": "s2", "prompt": "hi"}, 1))
-    s2 = [c for c in starts(tr.sink) if c.op_name == f"{NS}.session"][1]
-    assert s2.project == "default-proj"
-
-
-def test_midturn_prompt_is_steering():
-    tr, sink = run([
+def test_midturn_prompt_is_steering_not_new_turn():
+    tr, turns = run([
         ("SessionStart", {"session_id": SID}),
         ("UserPromptSubmit", {"session_id": SID, "prompt": "first"}),
         ("UserPromptSubmit", {"session_id": SID, "prompt": "actually, wait"}),
+        ("Stop", {"session_id": SID}),
+        ("SessionEnd", {"session_id": SID}),
     ])
-    assert len([c for c in starts(sink) if c.op_name == f"{NS}.turn"]) == 1
-    assert one(sink, f"{NS}.steering")
+    (node, _), = turns                            # one turn, not two
+    (ev,) = node["events"]
+    assert ev["name"] == "steering"
+    assert ev["attributes"][f"{NS}.steering.text"] == "actually, wait"
 
 
-def test_subagent_stop_annotation():
-    tr, sink = run([
+def test_stop_only_subagent_gets_identity_no_output():
+    tr, turns = run([
         ("SessionStart", {"session_id": SID}),
         ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
         ("SubagentStop", {"session_id": SID, "agent_type": "Explore", "agent_id": "a9",
-                          "last_assistant_message": "found 3 files"}),
+                          "last_assistant_message": "not reliably the subagent's"}),
+        ("Stop", {"session_id": SID}),
+        ("SessionEnd", {"session_id": SID}),
     ])
-    agent = one(sink, f"{NS}.agent.Explore")
-    assert agent.inputs["agent_type"] == "Explore"
-    assert agent.inputs["agent_id"] == "a9"
-    # stop-only: no output (last_assistant_message isn't reliably the subagent's reply)
-    assert end_of(sink, agent.id).output is None
+    (node, _), = turns
+    (sub,) = subagents_of(node, "Explore")
+    assert sub["attributes"][f"{NS}.agent_id"] == "a9"
+    assert "gen_ai.completion.0.content" not in sub["attributes"]
+
+
+def test_background_subagent_stop_is_ignored():
+    # Claude Code fires SubagentStop for its own background agents (prompt
+    # suggestions, title gen) with no agent_type; those must not create a node.
+    tr, turns = run([
+        ("SessionStart", {"session_id": SID}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
+        ("SubagentStop", {"session_id": SID, "last_assistant_message": "Yes, do it"}),
+        ("Stop", {"session_id": SID}),
+        ("SessionEnd", {"session_id": SID}),
+    ])
+    (node, _), = turns
+    assert subagents_of(node) == []
 
 
 def test_background_stop_does_not_steal_real_subagent():
     # a background SubagentStop (different agent_id, no agent_type) must not close
-    # the real tracked subagent; all its tools stay under one span.
-    tr, sink = run([
+    # the real tracked subagent; all its tools stay under one node.
+    tr, turns = run([
         ("SessionStart", {"session_id": SID}),
         ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
         ("SubagentStart", {"session_id": SID, "agent_id": "g1", "agent_type": "general-purpose"}),
@@ -146,172 +103,144 @@ def test_background_stop_does_not_steal_real_subagent():
                         "agent_id": "g1", "agent_type": "general-purpose"}),
         ("PostToolUse", {"session_id": SID, "tool_name": "Bash", "tool_use_id": "b",
                          "agent_id": "g1", "tool_response": {}}),
-        ("SubagentStop", {"session_id": SID, "agent_id": "g1", "agent_type": "general-purpose"}),
-    ])
-    agents = [c for c in starts(sink) if c.op_name == f"{NS}.agent.general-purpose"]
-    assert len(agents) == 1                                  # exactly one subagent span
-    bashes = [c for c in starts(sink) if c.op_name == f"{NS}.tool.Bash"]
-    assert all(b.parent_id == agents[0].id for b in bashes)  # both tools under it
-
-
-def test_background_subagent_stop_is_ignored():
-    # Claude Code fires SubagentStop for its own background agents (prompt
-    # suggestions, title gen) with no agent_type; those must not create a span.
-    tr, sink = run([
-        ("SessionStart", {"session_id": SID}),
-        ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
-        ("SubagentStop", {"session_id": SID, "last_assistant_message": "Yes, do it"}),
-    ])
-    assert not [c for c in starts(sink) if ".agent" in c.op_name]
-
-
-def test_subagent_interior_tool_nests_under_subagent():
-    # Claude Code has no SubagentStart: an interior tool (agent_id set) must
-    # lazily open the subagent span and nest under it, then SubagentStop closes it.
-    tr, sink = run([
-        ("SessionStart", {"session_id": SID}),
-        ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
-        ("PreToolUse", {"session_id": SID, "tool_name": "Agent", "tool_use_id": "launch"}),
-        ("PostToolUse", {"session_id": SID, "tool_name": "Agent", "tool_use_id": "launch",
-                         "tool_response": {}}),
-        ("PreToolUse", {"session_id": SID, "tool_name": "Bash", "tool_use_id": "inner",
-                        "agent_id": "a9", "agent_type": "Explore"}),
-        ("PostToolUse", {"session_id": SID, "tool_name": "Bash", "tool_use_id": "inner",
-                         "agent_id": "a9", "tool_response": {"stdout": "x"}}),
-        ("SubagentStop", {"session_id": SID, "agent_id": "a9", "agent_type": "Explore",
+        ("SubagentStop", {"session_id": SID, "agent_id": "g1", "agent_type": "general-purpose",
                           "last_assistant_message": "done"}),
+        ("Stop", {"session_id": SID}),
+        ("SessionEnd", {"session_id": SID}),
     ])
-    turn = one(sink, f"{NS}.turn")
-    agent = one(sink, f"{NS}.agent.Explore")
-    launcher = [c for c in starts(sink) if c.op_name == f"{NS}.tool.Agent"][0]
-    inner = [c for c in starts(sink) if c.op_name == f"{NS}.tool.Bash"][0]
-    assert launcher.parent_id == turn.id          # launcher tool is under the turn
-    assert agent.parent_id == launcher.id         # subagent nests under the launcher tool
-    assert inner.parent_id == agent.id            # interior tool under the subagent
-    assert end_of(sink, agent.id).output == "done"
+    (node, _), = turns
+    (sub,) = subagents_of(node)                   # exactly one subagent node
+    assert len(tools_of(sub, "Bash")) == 2        # both tools inside it
+    assert sub["attributes"]["gen_ai.completion.0.content"] == "done"
 
 
-def test_compaction_under_session_root():
-    tr, sink = run([
+def test_compaction_recorded_as_turn_event():
+    tr, turns = run([
         ("SessionStart", {"session_id": SID}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
         ("PreCompact", {"session_id": SID, "trigger": "auto"}),
+        ("Stop", {"session_id": SID}),
+        ("SessionEnd", {"session_id": SID}),
     ])
-    session = one(sink, f"{NS}.session")
-    comp = one(sink, f"{NS}.compaction")
-    assert comp.parent_id == session.id
-    assert comp.attributes[NS]["trigger"] == "auto"
+    (node, _), = turns
+    (ev,) = [e for e in node["events"] if e["name"] == "compaction"]
+    assert ev["attributes"][f"{NS}.compaction.trigger"] == "auto"
+
+
+def test_sampling_excludes_session():
+    tr, turns = run([
+        ("SessionStart", {"session_id": SID}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
+        ("SessionEnd", {"session_id": SID}),
+    ], session_rate=0.0)
+    assert turns == []
+    assert not tr.sessions
+
+
+def test_sweep_finalizes_stale_session_and_emits_pending_turn():
+    tr, turns = run([("SessionStart", {"session_id": SID}),
+                     ("UserPromptSubmit", {"session_id": SID, "prompt": "p"})], t0=1000.0)
+    assert turns == []                            # turn still open, nothing emitted
+    swept = tr.sweep(now=1000.0 + 10_000, ttl=60.0)
+    assert swept == 1
+    assert not tr.sessions
+    (node, _), = turns
+    assert node["attributes"][f"{NS}.incomplete"] == "true"
+
+
+def test_turnless_session_emits_nothing():
+    tr, turns = run([
+        ("SessionStart", {"session_id": SID, "cwd": "/repo"}),
+        ("SessionEnd", {"session_id": SID}),
+    ])
+    assert turns == []
+    assert not tr.sessions
 
 
 def test_session_autocreated_without_session_start():
     # resume/edit continue under a new session_id with no SessionStart; the turn
     # and its tools must still be traced (auto-created session).
-    tr, sink = run([
+    tr, turns = run([
         ("UserPromptSubmit", {"session_id": "resumed", "prompt": "keep going", "cwd": "/repo"}),
         ("PreToolUse", {"session_id": "resumed", "tool_name": "Bash", "tool_use_id": "t1"}),
         ("PostToolUse", {"session_id": "resumed", "tool_name": "Bash", "tool_use_id": "t1",
                          "tool_response": {"ok": 1}}),
+        ("Stop", {"session_id": "resumed"}),
+        ("SessionEnd", {"session_id": "resumed"}),
     ])
-    assert one(sink, f"{NS}.session")                      # session materialized
-    assert one(sink, f"{NS}.turn").inputs["prompt"] == "keep going"
-    assert one(sink, f"{NS}.tool.Bash")
+    (node, _), = turns
+    assert node["attributes"]["gen_ai.prompt.0.content"] == "keep going"
+    assert tools_of(node, "Bash")
 
 
-def test_subagent_interior_after_turn_stop_still_nests():
-    # subagents run async: SubagentStart + interior tools + SubagentStop can all
-    # arrive AFTER the turn's Stop. They must still nest under the subagent span.
-    tr, sink = run([
-        ("SessionStart", {"session_id": SID}),
-        ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
-        ("SubagentStart", {"session_id": SID, "agent_id": "g1", "agent_type": "general-purpose"}),
-        ("Stop", {"session_id": SID}),                     # turn ends while subagent runs
-        ("PreToolUse", {"session_id": SID, "tool_name": "Bash", "tool_use_id": "i1",
-                        "agent_id": "g1", "agent_type": "general-purpose"}),
-        ("PostToolUse", {"session_id": SID, "tool_name": "Bash", "tool_use_id": "i1",
-                         "agent_id": "g1", "tool_response": {"ok": 1}}),
-        ("SubagentStop", {"session_id": SID, "agent_id": "g1", "agent_type": "general-purpose"}),
-    ])
-    agent = one(sink, f"{NS}.agent.general-purpose")
-    inner = one(sink, f"{NS}.tool.Bash")
-    assert inner.parent_id == agent.id                    # interior tool nests under subagent
+def test_project_per_repo_routes_by_cwd_leaf():
+    tr, turns = run([
+        ("SessionStart", {"session_id": SID, "cwd": "/Users/me/my-repo"}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "hi"}),
+        ("Stop", {"session_id": SID}),
+        ("SessionEnd", {"session_id": SID}),
+    ], project="default-proj", project_per_repo=True)
+    (_, project_id), = turns
+    assert project_id == "ent/my-repo"            # cwd leaf + default entity
 
 
 def test_thread_id_from_transcript_root(tmp_path):
-    import json
-    from weave_agent_adapter.core.model import WireEvent
-    from weave_agent_adapter.profile import load_profile
-    from weave_agent_adapter.sinks.recording import RecordingSink
-    from weave_agent_adapter.tracer import Tracer
     tp = tmp_path / "t.jsonl"
     tp.write_text("\n".join([
-        json.dumps({"type": "queue-operation"}),                       # skipped
+        json.dumps({"type": "queue-operation"}),                       # no uuid: skipped
         json.dumps({"type": "user", "isSidechain": False, "parentUuid": None,
                     "uuid": "ROOT-UUID", "message": {"role": "user", "content": "hi"}}),
         json.dumps({"type": "assistant", "parentUuid": "ROOT-UUID"}),
     ]))
-    tr = Tracer(load_profile("claude-code"), "p", RecordingSink())
-    for name, p in [("SessionStart", {"session_id": "s", "transcript_path": str(tp)}),
-                    ("UserPromptSubmit", {"session_id": "s", "prompt": "hi", "transcript_path": str(tp)})]:
-        tr.handle(WireEvent(1, "claude-code", name, 1.0, p, 1))
-    # both the session and turn carry the fork-stable conversation id
-    assert one(tr.sink, f"{NS}.session").thread_id == "ROOT-UUID"
-    assert one(tr.sink, f"{NS}.turn").thread_id == "ROOT-UUID"
-
-
-def test_thread_id_from_profile_field_source():
-    # a harness that exposes a conversation id directly in the payload: profile
-    # declares thread.source="field"; no transcript read, no Claude assumptions.
-    from weave_agent_adapter.core.model import WireEvent
-    from weave_agent_adapter.profile import Profile
-    from weave_agent_adapter.sinks.recording import RecordingSink
-    from weave_agent_adapter.tracer import Tracer
-    prof = Profile(
-        name="thirdparty", adapter="command-hook",
-        events={"SessionStart": "session_start", "UserPromptSubmit": "turn_start"},
-        fields={"session_id": "session_id", "prompt": "prompt", "conv": "conversation_id"},
-        registration={}, subagents={"launcher_tools": []},
-        thread={"source": "field", "id_field": "conv"},
-    )
-    tr = Tracer(prof, "p", RecordingSink())
-    for name, p in [("SessionStart", {"session_id": "s", "conversation_id": "CONV-9"}),
-                    ("UserPromptSubmit", {"session_id": "s", "prompt": "hi", "conversation_id": "CONV-9"})]:
-        tr.handle(WireEvent(1, "thirdparty", name, 1.0, p, 1))
-    assert one(tr.sink, f"{NS}.session").thread_id == "CONV-9"
-
-
-def test_turnless_session_emits_nothing():
-    # a session opened and closed with no user prompt (background/quick-open) is dropped
-    tr, sink = run([
-        ("SessionStart", {"session_id": SID, "cwd": "/repo"}),
+    tr, turns = run([
+        ("SessionStart", {"session_id": SID, "transcript_path": str(tp)}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "hi", "transcript_path": str(tp)}),
+        ("Stop", {"session_id": SID}),
         ("SessionEnd", {"session_id": SID}),
     ])
-    assert starts(sink) == []
-    assert not tr.sessions
+    (node, _), = turns
+    assert node["attributes"]["gen_ai.conversation.id"] == "ROOT-UUID"
 
 
-def test_sampling_excludes_session():
-    tr, sink = run([("SessionStart", {"session_id": SID})], session_rate=0.0)
-    assert starts(sink) == []
-    assert not tr.sessions
+def test_autocreated_session_creates_synthetic_turn_for_midturn_events():
+    # sidecar restart: first event for this sid is a tool, not a turn_start;
+    # a synthetic turn is created so the tool isn't dropped
+    tr, turns = run([
+        ("PreToolUse", {"session_id": "crash-resumed", "tool_name": "Bash", "tool_use_id": "t1"}),
+        ("PostToolUse", {"session_id": "crash-resumed", "tool_name": "Bash", "tool_use_id": "t1",
+                         "tool_response": {"ok": 1}}),
+        ("Stop", {"session_id": "crash-resumed"}),
+        ("SessionEnd", {"session_id": "crash-resumed"}),
+    ])
+    (node, _), = turns
+    assert node["attributes"]["gen_ai.prompt.0.content"] == "(resumed)"
+    assert tools_of(node, "Bash")
 
 
-def test_sweep_finalizes_stale_session():
-    tr, sink = run([("SessionStart", {"session_id": SID}),
-                    ("UserPromptSubmit", {"session_id": SID, "prompt": "p"})], t0=1000.0)
-    # a turn was opened, so the session is live; sweep well past the ttl
-    swept = tr.sweep(now=1000.0 + 10_000, ttl=60.0)
-    assert swept == 1
-    assert not tr.sessions
-    e = end_of(sink, one(sink, f"{NS}.session").id)
-    assert e.output["incomplete"] is True
+def test_subagent_stop_with_no_agent_id_ignored():
+    # agent_type present but agent_id missing → must not key subagents[None]
+    tr, turns = run([
+        ("SessionStart", {"session_id": SID}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
+        ("SubagentStop", {"session_id": SID, "agent_type": "Explore"}),
+        ("Stop", {"session_id": SID}),
+        ("SessionEnd", {"session_id": SID}),
+    ])
+    (node, _), = turns
+    assert subagents_of(node) == []
 
 
 def test_redaction_applied_to_tool_input():
-    tr, sink = run([
+    from weave_agent_adapter.redact import Redactor
+    tr, turns = run([
         ("SessionStart", {"session_id": SID}),
         ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
         ("PreToolUse", {"session_id": SID, "tool_name": "Bash", "tool_use_id": "t1",
                         "tool_input": {"api_key": "supersecret", "command": "ls"}}),
+        ("Stop", {"session_id": SID}),
+        ("SessionEnd", {"session_id": SID}),
     ], redactor=Redactor())
-    tool = one(sink, f"{NS}.tool.Bash")
-    assert tool.inputs["tool_input"]["api_key"] == "[REDACTED]"
-    assert tool.inputs["tool_input"]["command"] == "ls"
+    (node, _), = turns
+    args = tools_of(node, "Bash")[0]["attributes"]["gen_ai.tool.call.arguments"]
+    assert "supersecret" not in args
+    assert "ls" in args

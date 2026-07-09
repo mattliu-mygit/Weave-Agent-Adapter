@@ -1,27 +1,17 @@
 """weave-agent-adapter data model (spec 01).
 
-Pure dataclasses + enums: the wire event (layer A), the sidecar's in-memory
-state (layer B), and the Weave call each span becomes (layer C). No behavior
-here, just the shapes the rest of the sidecar builds on.
+Pure dataclasses + enums: the wire event (layer A) and the sidecar's in-memory
+domain state (layer B). The tracer reduces wire events into this model; turn
+emitters render finalized turns from it. No behavior here.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Optional
 
 
 # --- Enums ---
-
-class SessionStatus(str, Enum):
-    OPEN = "open"
-    CLOSED = "closed"
-
-
-class TurnStatus(str, Enum):
-    OPEN = "open"
-    CLOSED = "closed"
-
 
 class ToolStatus(str, Enum):
     RUNNING = "running"
@@ -68,72 +58,50 @@ class Steering:
     kind: SteeringKind
     at: float
     text: Optional[str] = None              # interjection / feedback (redacted)
-    input_diff: Optional[dict] = None       # for INPUT_REWRITE
-    related_tool_key: Optional[str] = None
 
 
 @dataclass
 class ToolCall:
     correlation_key: str                    # tool_use_id or fallback (spec 05)
-    call_id: str
     tool_name: str
     tool_input: dict                        # redacted
     started_at: float
+    agent_id: Optional[str] = None          # set when the tool ran inside a subagent
     permission: Optional[Permission] = None
     status: ToolStatus = ToolStatus.RUNNING
-    output: Any = None                      # redacted; set on OK
+    output: object = None                   # redacted; set on OK
     error: Optional[str] = None             # set on ERROR
     ended_at: Optional[float] = None
 
 
 @dataclass
 class Turn:
-    call_id: str
     index: int                              # 0-based within session
     started_at: float
     open: bool = True
     input_text: Optional[str] = None        # prompt (redacted)
-    output_text: Optional[str] = None       # assistant's final message for the turn (redacted)
+    output_text: Optional[str] = None       # assistant's final message (redacted)
     tool_calls: dict = field(default_factory=dict)   # correlation_key -> ToolCall
     tool_order: list = field(default_factory=list)   # preserves emission order
-    steering: list = field(default_factory=list)
-    subagents: dict = field(default_factory=dict)    # agent_id -> open subagent span
-    last_agent_tool: Optional[str] = None            # call_id of the most recent Agent/Task tool
+    steering: list = field(default_factory=list)     # Steering
+    compactions: list = field(default_factory=list)  # (at, trigger)
+    subagents: dict = field(default_factory=dict)    # agent_id -> subagent record
+    chat_calls: list = field(default_factory=list)   # per-LLM-call records (enrichment)
     ended_at: Optional[float] = None
-    status: TurnStatus = TurnStatus.OPEN
+    incomplete: bool = False                # closed by sweep, not by the harness
+    emitted: bool = False                   # handed to turn emitters
 
 
 @dataclass
 class Session:
     session_id: str
-    trace_id: str                           # one Weave trace per session
-    root_call_id: str                       # the `session` call
-    project: str                            # entity/project
+    project: str                            # bare name or "entity/project"
     started_at: float
-    last_activity: float                    # drives idle shutdown
+    last_activity: float                    # drives idle shutdown + sweep
+    harness: Optional[str] = None           # profile name, e.g. "claude-code"
     permission_mode: Optional[str] = None
     cwd: Optional[str] = None
     transcript: Optional[str] = None        # transcript path; read once for the thread id
-    thread_id: Optional[str] = None         # conversation root uuid (fork-stable)
-    status: SessionStatus = SessionStatus.OPEN
+    thread_id: Optional[str] = None         # conversation id (fork-stable)
     current_turn: Optional[Turn] = None
     turn_count: int = 0
-    emitted: bool = False                   # session span emitted lazily on first turn
-
-
-# --- Layer C: Weave call ---
-
-@dataclass
-class WeaveCall:
-    id: str
-    trace_id: str                           # == session's trace_id
-    op_name: str                            # e.g. "weave_agent_adapter.tool.Bash"
-    started_at: float
-    parent_id: Optional[str] = None         # None only for the root session
-    ended_at: Optional[float] = None
-    inputs: dict = field(default_factory=dict)
-    output: Any = None
-    attributes: dict = field(default_factory=dict)
-    exception: Optional[str] = None         # set for ERROR tool calls
-    project: Optional[str] = None            # set on the session-root call; routes the trace's project
-    thread_id: Optional[str] = None          # conversation id; links forks/resumes in Weave threads

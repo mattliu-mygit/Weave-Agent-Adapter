@@ -1,7 +1,7 @@
 """Sidecar (specs 03/04): receive wire events on a Unix socket and trace them.
 
-Hosts one `Tracer` per harness (routed on `WireEvent.harness`) sharing a single
-sink, so concurrent harnesses trace side by side. Singleton via an advisory
+Hosts one `Tracer` per harness (routed on `WireEvent.harness`) sharing the turn
+emitters, so concurrent harnesses trace side by side. Singleton via an advisory
 `flock` (extra spawns fail the lock and exit); scales to zero after `idle_s`
 with no events.
 """
@@ -22,10 +22,9 @@ ACCEPT_TIMEOUT_S = 0.5
 
 
 class Sidecar:
-    def __init__(self, sink, project, socket_path, profiles_dir=None, idle_s=120.0,
+    def __init__(self, project, socket_path, profiles_dir=None, idle_s=120.0,
                  redactor=None, session_rate=1.0, session_ttl=3600.0, sweep_interval=30.0,
-                 project_per_repo=False):
-        self.sink = sink
+                 project_per_repo=False, turn_emitters=None, turn_linger=120.0):
         self.project = project
         self.socket_path = socket_path
         self.profiles_dir = profiles_dir
@@ -33,7 +32,9 @@ class Sidecar:
         self.redactor = redactor
         self.session_rate = session_rate
         self.project_per_repo = project_per_repo
+        self.turn_emitters = turn_emitters or []
         self.session_ttl = session_ttl        # drop sessions idle past this (crash safety)
+        self.turn_linger = turn_linger        # finalize a closed turn after this much quiet
         self.sweep_interval = sweep_interval
         self.tracers: dict = {}
         self._stop = threading.Event()
@@ -43,9 +44,10 @@ class Sidecar:
     def _tracer_for(self, harness: str) -> Tracer:
         tr = self.tracers.get(harness)
         if tr is None:
-            tr = Tracer(load_profile(harness, self.profiles_dir), self.project, self.sink,
+            tr = Tracer(load_profile(harness, self.profiles_dir), self.project,
                         redactor=self.redactor, session_rate=self.session_rate,
-                        project_per_repo=self.project_per_repo)
+                        project_per_repo=self.project_per_repo,
+                        turn_emitters=self.turn_emitters)
             self.tracers[harness] = tr
         return tr
 
@@ -116,7 +118,11 @@ class Sidecar:
                     for line in buf.split(b"\n"):
                         if line.strip():
                             self._handle_line(line)
-                self._last = time.time()
+                now = time.time()
+                self._last = now
+                if now - last_sweep > self.sweep_interval:
+                    self._sweep(now)
+                    last_sweep = now
         finally:
             self._sweep(time.time(), ttl=0.0)   # finalize any still-open sessions on exit
             srv.close()
@@ -129,6 +135,7 @@ class Sidecar:
         ttl = self.session_ttl if ttl is None else ttl
         for tr in self.tracers.values():
             try:
+                tr.finalize_idle_turns(now, self.turn_linger)
                 tr.sweep(now, ttl)
             except Exception:
                 pass

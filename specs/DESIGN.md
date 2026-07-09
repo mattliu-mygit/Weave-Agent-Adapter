@@ -1,10 +1,12 @@
 # weave-agent-adapter: Weave tracing for agent harnesses
 
-> v1 design. Implemented: capture, sidecar + lifecycle, WeaveSink (verified live), redaction, config, sampling, installer, packaging. See §14.
+> v1 design. Implemented: capture, sidecar + lifecycle, GenAI turn emission (verified live), redaction, config, sampling, installer, packaging. See §14.
+>
+> **Emission (July 2026, spans-only):** the sidecar reduces hook events into turns and emits each finalized turn as one **OTel GenAI trace** (`invoke_agent` root, `execute_tool` children, nested subagents), stitched into conversations by a fork-stable conversation id — the plane Weave's agents UI and Signals run on. The earlier Weave-SDK "calls" plane was removed for simplicity (history: commits ≤ `a5c3696`; it alone had server-joined score write-back via `apply_scorer` — restore from history if spans-side scoring never lands). Sections below written before the pivot describe the calls-plane design; the concepts (canonical actions, correlation, redaction, lifecycle) carry over unchanged.
 
 ## 1. Principles
 
-- **Normal Weave usage.** `weave.init()` once, warm client for the session → async batching, retry, and native call rendering come from the SDK; redaction and sampling are ours (see §9).
+- **Normal Weave usage.** `weave.init()` once, warm client for the session → async batching, retry, and native call rendering come from the SDK; redaction and sampling are ours (see §9). *(Calls plane; the spans plane uses the OTel SDK's batching/retry instead.)*
 - **Non-intrusive.** The harness is never modified. Hooks are external one-line commands (plugin auto-registers; 0 authored lines). The sidecar is a separate process beside the harness, not inside it.
 - **Never block, never break.** Hooks do a µs local write and exit 0; all failure swallowed.
 - **Harness-agnostic.** The core runs on a fixed set of **canonical actions**; each harness plugs in via an **adapter** (its hook mechanism) + a declarative **profile** (its event/field/registration mapping), [spec 02](02-harness-profiles.md). Assumes the harness has a hook (or hook-like) system. Command-based hooks reuse one adapter, so most harnesses are profile-only, no code. Two profiles ship, Claude Code and **Codex** (`profiles/codex.toml`); Codex was added with *zero* code changes, the concrete proof of the claim. (Codex also emits `SubagentStart` in practice, which Claude Code documents but doesn't emit in 2.1.201, so the two profiles genuinely exercise different event paths.) Event names below reflect the Claude Code profile.

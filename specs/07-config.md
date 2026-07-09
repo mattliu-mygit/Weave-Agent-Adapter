@@ -16,13 +16,12 @@ Only the **sidecar** reads `config.toml`. The **hook stays parse-free** (spec 03
 | `weave.entity` | `WANDB_ENTITY` |   | Weave entity |
 | `weave.project` | `WEAVE_PROJECT` | `claude-code` | Weave project (default + no-cwd fallback) |
 | `weave.project_per_repo` |   | `false` | trace each repo to its own project (named after the cwd leaf) |
-| `weave.enable_disk_fallback` | `WEAVE_ENABLE_DISK_FALLBACK` | `true` | SDK dead-letter log for sends that fail after retries (not replay-on-restart) |
 | `redaction.enabled` |   | `true` | master switch for our `Redactor` |
 | `redaction.redact_keys` |   | Redactor defaults | extra sensitive keys to deny |
 | `sampling.session_rate` |   | `1.0` | fraction of sessions traced (root-only) |
-| `trace.granularity` |   | `session` | `session` (one trace/session) or `turn` |
 | `sidecar.idle_shutdown_s` |   | `120` | idle exit timeout |
 | `sidecar.session_ttl_s` |   | `3600` | finalize + drop sessions idle past this (crash safety) |
+| `sidecar.turn_linger_s` |   | `120` | finalize a closed turn after this much quiet (the conversation's last turn appears without a session end) |
 | `paths.socket` / `paths.state` |   | under `~/.weave-agent-adapter/` | runtime dirs |
 
 ## Secrets
