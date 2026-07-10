@@ -47,15 +47,15 @@ id_key     = "uuid"                        # the row field to use as the convers
 source = "claude-transcript"               # per-LLM-call chat spans + token usage from the transcript
 
 [config_surface]
-# User-editable context artifacts that shape agent behavior, hashed into
+# Deliberately-edited context artifacts that shape agent behavior, hashed into
 # weave_agent_adapter.config_version — the A/B cohort key for evaluating
-# config changes. {cwd_slug} follows ~/.claude/projects naming ("/" -> "-").
+# config changes. Ambient state (auto-memory) is excluded: it changes nearly
+# every session, which would flip the version constantly and shatter cohorts.
 paths = [
   "~/.claude/CLAUDE.md",
   "~/.claude/skills",
   "~/.claude/commands",
   "~/.claude/agents",
-  "~/.claude/projects/{cwd_slug}/memory",
   "{cwd}/CLAUDE.md",
   "{cwd}/.claude/skills",
   "{cwd}/.claude/commands",

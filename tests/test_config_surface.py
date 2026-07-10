@@ -1,5 +1,5 @@
 """Config-surface fingerprint: a stable short hash of the user-editable context
-artifacts (CLAUDE.md, skills, commands, memory) so evaluation cohorts can be
+artifacts (CLAUDE.md, skills, commands) so evaluation cohorts can be
 compared across config changes (the A/B key)."""
 from __future__ import annotations
 
@@ -67,3 +67,14 @@ def test_cwd_and_slug_placeholders(tmp_path):
     tpl = str(tmp_path) + "/{cwd_slug}/MEMORY.md"
     assert config_version([tpl], cwd=str(proj)) is not None
     assert config_version([tpl], cwd="/elsewhere") is None
+
+
+def test_claude_code_surface_excludes_ambient_memory():
+    # config_version is the A/B cohort key: it must cover only deliberately
+    # edited artifacts. Auto-memory changes nearly every session — including
+    # it would flip the version constantly and shatter cohorts.
+    from weave_agent_adapter.profile import load_profile
+
+    paths = load_profile("claude-code").config_surface["paths"]
+    assert not any("memory" in p for p in paths)
+    assert any(p.endswith("/skills") for p in paths)
