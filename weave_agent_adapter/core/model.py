@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
+SUPPORTED_WIRE_VERSION = 1
+
 
 # --- Enums ---
 

@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import fcntl
 import json
+import math
 import os
 import socket
 import threading
 import time
 
-from .core.model import WireEvent
+from .core.model import SUPPORTED_WIRE_VERSION, WireEvent
+from .diagnostics import diagnose
 from .profile import load_profile
 from .tracer import Tracer
 
@@ -54,18 +56,51 @@ class Sidecar:
     def _handle_line(self, raw: bytes) -> None:
         try:
             d = json.loads(raw)
+            if not isinstance(d, dict):
+                raise ValueError("wire envelope must be an object")
+            if type(d.get("v")) is not int or d["v"] != SUPPORTED_WIRE_VERSION:
+                diagnose("wire_version", harness=d.get("harness"), event=d.get("event"))
+                return
+            if not isinstance(d.get("harness"), str) or not d["harness"]:
+                raise ValueError("wire harness is required")
+            if not isinstance(d.get("event"), str) or not d["event"]:
+                raise ValueError("wire event is required")
+            captured_at = float(d["captured_at"])
+            if not math.isfinite(captured_at):
+                raise ValueError("wire timestamp must be finite")
+            payload = d.get("payload")
+            if not isinstance(payload, dict):
+                raise ValueError("wire payload must be an object")
             wire = WireEvent(
-                v=d.get("v", 1), harness=d["harness"], event=d["event"],
-                captured_at=float(d["captured_at"]),
-                payload=d.get("payload") or {}, pid=int(d.get("pid", 0)),
+                v=d["v"], harness=d["harness"], event=d["event"],
+                captured_at=captured_at, payload=payload, pid=int(d.get("pid", 0)),
             )
-        except Exception:
+        except Exception as exc:
+            diagnose("wire_parse", error=exc)
             return
         # one bad event or profile must never take down the sidecar
         try:
             self._tracer_for(wire.harness).handle(wire)
-        except Exception:
-            pass
+        except Exception as exc:
+            diagnose("wire_handle", harness=wire.harness, event=wire.event, error=exc)
+
+    def has_active_work(self) -> bool:
+        return any(tr.has_active_work() for tr in self.tracers.values())
+
+    def can_idle_exit(self, now: float) -> bool:
+        return now - self._last > self.idle_s and not self.has_active_work()
+
+    def flush_emitters(self) -> bool:
+        ok = True
+        for emitter in self.turn_emitters:
+            try:
+                if emitter.flush() is False:
+                    ok = False
+                    diagnose("export_flush")
+            except Exception as exc:
+                ok = False
+                diagnose("export_flush", error=exc)
+        return ok
 
     def _acquire_singleton_lock(self) -> bool:
         os.makedirs(os.path.dirname(self.socket_path), exist_ok=True)
@@ -96,7 +131,7 @@ class Sidecar:
                     conn, _ = srv.accept()
                 except socket.timeout:
                     now = time.time()
-                    if now - self._last > self.idle_s:
+                    if self.can_idle_exit(now):
                         break            # idle: scale to zero
                     if now - last_sweep > self.sweep_interval:
                         self._sweep(now)

@@ -161,8 +161,7 @@ def cmd_sidecar(args) -> int:
     try:
         sc.serve()
     finally:
-        for e in turn_emitters:
-            e.flush()
+        sc.flush_emitters()
     return 0
 
 
