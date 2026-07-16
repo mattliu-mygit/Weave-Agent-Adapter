@@ -13,7 +13,8 @@ gracefully (no session_end -> sweep closes; no tool_pre -> span synthesized
 from the completion; no subagent_start -> record created at first sight).
 
 Timing comes from the events' `captured_at`. Correlation (spec 05): tool calls
-key off `tool_use_id` when present, else the last still-running tool (LIFO).
+key off `tool_use_id` when present; ID-less events require one unambiguous
+running match by tool name and compatible input.
 """
 from __future__ import annotations
 

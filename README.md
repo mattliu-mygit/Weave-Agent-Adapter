@@ -57,8 +57,9 @@ weave-agent-adapter uninstall [--harness codex]
 
 The harness is never modified.
 
-- Hooks (external one-line commands, auto-registered) emit each event to a local socket and exit immediately.
-- A sidecar, spawned at session start as one warm process per machine, reduces the event stream into turns (with their tools, subagents, permissions, and steering) and emits each finalized turn as one OTel GenAI trace: `invoke_agent` root, `execute_tool` children, nested subagents. Turns are stitched into conversations by a fork-stable conversation id, which is exactly what Weave's agents UI (Conversations/Spans) and Signals run on.
+- Hooks (external one-line commands, auto-registered) perform a time- and size-bounded send to a local socket and exit without making permission decisions.
+- A sidecar reduces the event stream into turns (with their tools, subagents, permissions, and steering) and emits each finalized turn as one OTel GenAI trace: `invoke_agent` root, `execute_tool` children, nested subagents. It uses Weave's turn/thread attributes so those traces appear in Conversations.
+- The standard batched OTLP/HTTP exporter sends spans directly to `https://trace.wandb.ai/otel/v1/traces`. Delivery is best-effort; local payload-free diagnostics make authentication, initialization, and flush failures visible.
 
 Adopters write zero lines of code: installing the hooks registers everything.
 

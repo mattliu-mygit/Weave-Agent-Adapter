@@ -1,47 +1,23 @@
-# Spec 07: Config
+# Spec 07: Configuration and privacy
 
-Consumed by the sidecar (M1+); the hook needs almost none of it. Example: [`../examples/config.toml`](../examples/config.toml).
+The sidecar reads `~/.weave-agent-adapter/config.toml` unless
+`WEAVE_AGENT_ADAPTER_CONFIG` selects another path. Environment overrides take
+precedence. The hook reads only its socket, disable, and diagnostic environment
+variables so it remains fast and standard-library-only.
 
-## Sources & precedence
+Key settings are the Weave project, optional per-repository routing, redaction
+switch/extra keys, session sampling rate, idle shutdown, session TTL, and turn
+linger. A bare project is combined with the authenticated W&B default entity;
+an explicit `entity/project` is used verbatim. `WANDB_API_KEY` comes from the
+environment or the W&B netrc login, never from adapter config.
 
-`env var` > `config.toml` > built-in default. File location: `~/.weave-agent-adapter/config.toml` (path via `WEAVE_AGENT_ADAPTER_CONFIG`).
+`WEAVE_AGENT_ADAPTER_DISABLE` accepts explicit truthy values (`1`, `true`,
+`yes`, `on`); `0`, `false`, `no`, and an empty value leave tracing enabled.
+`WEAVE_AGENT_ADAPTER_OTLP_ENDPOINT` overrides the documented Weave endpoint.
+`WEAVE_AGENT_ADAPTER_LOG` overrides the rotating diagnostic log path.
 
-Only the **sidecar** reads `config.toml`. The **hook stays parse-free** (spec 03), so its paths (capture dir, socket) arrive via env vars, set by the installer from config, defaulting to a harness-neutral `~/.weave-agent-adapter/`. The runtime dir is deliberately *not* under a harness's own config dir (e.g. `.claude/`).
-
-## Keys
-
-| Key | Env override | Default | Meaning |
-|---|---|---|---|
-| `active_harness` | `WEAVE_AGENT_ADAPTER_HARNESS` | `claude-code` | profile in `weave_agent_adapter/profiles/<name>.toml` (spec 02) |
-| `weave.entity` | `WANDB_ENTITY` |   | Weave entity |
-| `weave.project` | `WEAVE_PROJECT` | `claude-code` | Weave project (default + no-cwd fallback) |
-| `weave.project_per_repo` |   | `false` | trace each repo to its own project (named after the cwd leaf) |
-| `redaction.enabled` |   | `true` | master switch for our `Redactor` |
-| `redaction.redact_keys` |   | Redactor defaults | extra sensitive keys to deny |
-| `sampling.session_rate` |   | `1.0` | fraction of sessions traced (root-only) |
-| `sidecar.idle_shutdown_s` |   | `120` | idle exit timeout |
-| `sidecar.session_ttl_s` |   | `3600` | finalize + drop sessions idle past this (crash safety) |
-| `sidecar.turn_linger_s` |   | `120` | finalize a closed turn after this much quiet (the conversation's last turn appears without a session end) |
-| `paths.socket` / `paths.state` |   | under `~/.weave-agent-adapter/` | runtime dirs |
-
-## Secrets
-
-`WANDB_API_KEY` is read from the **environment only**, never from `config.toml` (which may be committed). The example file and `.gitignore` reflect this.
-
-## Redaction
-
-Done by our own `Redactor` (`redact.py`) in the **tracer**, before any sink, so Weave, debug, and every sink get already-redacted data. (We can't lean on Weave's `redact_keys`/`redact_pii`: those hook the `@weave.op` path, and we use the low-level `call_start`/`call_end` API.) Default-on. Two rules:
-
-1. **Key denylist**, a dict key containing `api_key`, `authorization`, `token`, `secret`, `password`, … → the whole value becomes `[REDACTED]`.
-2. **Secret-shaped patterns**, scrub substrings matching known key shapes (`sk-…`, `wandb_v1_…`, `gh*_…`, AWS `AKIA…`, JWTs, PEM blocks) anywhere in strings.
-
-Applied to `tool_input`, `tool_output`, and the prompt. Deny keys/enabled are configurable (`redaction.*`).
-
-## Sampling
-
-`session_rate` decides at the **root** `session` span; children inherit (Weave sampling is root-only). Unsampled sessions do no Weave I/O.
-
-## OPEN
-
-- Per-project config overrides (like `.claude/settings.json` layering), defer unless requested.
-- Exact env var names for our own keys (align with Weave's where they overlap).
+Redaction is default-on before every debug/network sink. Dictionary keys
+containing configured sensitive terms lose their entire value. String patterns
+remove common API tokens, JWTs, AWS access-key IDs, and complete multiline PEM
+private-key blocks. Diagnostics never contain payload values or exception
+messages and are written with user-only permissions.

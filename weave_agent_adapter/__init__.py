@@ -1,7 +1,8 @@
-"""weave-agent-adapter: Weave tracing for agent harnesses (Claude Code first).
+"""Harness-neutral OpenTelemetry tracing for coding-agent sessions."""
 
-Milestone 0 ships only the transparent capture harness (`hook.py`). The
-sidecar / Weave-ingestion layers described in DESIGN.md land in M1+.
-"""
+from importlib import metadata
 
-__version__ = "0.0.0"
+try:
+    __version__ = metadata.version("weave-agent-adapter")
+except metadata.PackageNotFoundError:
+    __version__ = "0+unknown"

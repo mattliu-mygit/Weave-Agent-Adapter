@@ -1,56 +1,23 @@
-# Spec 03: Hook → sidecar: dispatcher & wire protocol
+# Spec 03: Hook and wire protocol
 
-The single command wired to every event, and how it hands the event to the sidecar. This is the **`command-hook` adapter** (spec 02), it serves any harness whose hooks invoke a command. The hook is dumb: it forwards the raw payload and lets the sidecar normalize via the profile (spec 02).
+The command-hook entrypoint is:
 
-It reads the event payload as JSON on stdin. That is the one delivery mode the command-hook adapter implements, and the mode both shipped harnesses use; a harness that delivered payloads another way would need a separate adapter (spec 02).
-
-## Entrypoint
-
-```
+```text
 weave-agent-adapter hook --harness NAME --event NAME
 ```
 
-Both args come from the profile's `[registration]` (spec 02), so the hook never parses the payload to learn its harness or event. The same static command backs every event.
+Both arguments come from the harness profile. The hook stamps `captured_at` on
+entry, reads one JSON object from stdin within 0.5 seconds and 1 MiB, wraps it as
+`{v, harness, event, captured_at, pid, payload}`, and attempts a bounded send to
+the local Unix stream socket. Partial input, oversized input, malformed JSON,
+or a non-object payload is diagnosed without forwarding a fabricated event.
 
-## What the hook does
+If the socket is absent, any hook may detach the sidecar and retry only within a
+short total deadline. Failure is best-effort: diagnose metadata only, exit zero,
+and never persist the raw payload. Stdout stays empty and the hook never makes a
+permission decision.
 
-1. Read stdin, bounded (0.5 s cap, never hang a turn).
-2. Wrap it as a `WireEvent` (spec 01): `{v, harness, event, captured_at, pid, payload}`, `payload` is the raw stdin verbatim; `captured_at` is stamped here (authoritative timing).
-3. **Session-start event only:** ensure the sidecar is up (spec 04).
-4. Send to the sidecar socket; on failure, best-effort spool.
-5. Exit 0.
-
-It parses **nothing** out of the payload, `session_id`, `tool_name`, etc. are extracted by the sidecar via the profile's `[fields]`.
-
-## Invariants (runs on every tool call)
-
-- **Never block:** bounded stdin read, bounded socket write, no synchronous network. The hook never calls Weave, deferral is the sidecar's job (spec 04).
-- **Never break:** catch-all → always `exit 0`.
-- **Never decide:** stdout left empty. We're a passive observer; even on `PreToolUse` we never emit a `permissionDecision`.
-
-## Transport
-
-- **Unix domain socket**, `SOCK_STREAM`, at `~/.weave-agent-adapter/sidecar.sock` (overridable). Local only, mode `0600`.
-- STREAM (not DGRAM) so large payloads (big tool outputs) aren't capped by datagram limits.
-
-## Framing
-
-Newline-delimited JSON, one `WireEvent` per line. The hook `connect → write one line → close`; it does not wait for a reply (fire-and-forget).
-
-```json
-{"v":1,"harness":"claude-code","event":"PreToolUse","captured_at":1751914800.12,"pid":41234,"payload":{ ...raw hook stdin... }}
-```
-
-## Failure handling (best-effort)
-
-- The **session-start hook waits** until the socket is accepting before returning (spec 04), so later hooks in the session find the sidecar up.
-- If a connect/write still fails (e.g. sidecar crashed mid-session) → swallow, exit 0. v1 is best-effort: dropping the occasional event is acceptable.
-- **Optional thin spool** (`~/.weave-agent-adapter/spool/<session>.jsonl`) drained by the sidecar on next contact (idempotent by span id). Kept minimal, not a durability layer.
-
-## Versioning
-
-`v` is the schema version. The sidecar accepts known versions and logs+drops unknown ones (never crashes).
-
-## OPEN
-
-- Whether `--event` can be dropped once payloads reliably carry the native event name (M0). Even then, passing it via `[registration]` keeps the hook parse-free, which is preferable.
+Messages are newline-delimited JSON. Wire version 1 is the only accepted
+version; unknown versions and invalid envelope fields are logged and dropped.
+The socket defaults to `~/.weave-agent-adapter/sidecar.sock`, is mode `0600`, and
+can be overridden with `WEAVE_AGENT_ADAPTER_SOCKET`.

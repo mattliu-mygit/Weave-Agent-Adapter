@@ -130,7 +130,7 @@ class WeaveCall:
 
 ### Timing rule
 
-OTEL/Weave calls need start+end together, but hook events arrive separately. Rule: **stash `started_at` + ids at open; emit the call (`call_start` then `call_end`) at close**, using stored start + close `captured_at`. Long-open calls (session, turn) may `call_start` early so the UI shows them live, decided in spec 06.
+OTel spans need start and end timestamps, but hook events arrive separately. The reducer stores `started_at` and correlation IDs at open, then builds and ends the span after the matching close event using hook-captured times. Finalized turns are handed to the batched OTLP exporter as complete span trees (spec 06).
 
 ### Key attributes (illustrative; full schema in spec 06)
 
