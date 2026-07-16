@@ -19,16 +19,51 @@ import sys
 import time
 
 from . import transport
+from .diagnostics import diagnose, open_diagnostic_stream
 
 
-def _read_stdin(timeout: float = 0.5) -> str:
+def _read_stdin(timeout: float = 0.5, max_bytes: int = 1_048_576) -> str:
+    """Read stdin without waiting past *timeout* or beyond *max_bytes*."""
+    fd = None
+    was_blocking = None
     try:
         if sys.stdin is None or sys.stdin.closed:
             return ""
-        ready, _, _ = select.select([sys.stdin], [], [], timeout)
-        return sys.stdin.read() if ready else ""
-    except Exception:
+        fd = sys.stdin.fileno()
+        was_blocking = os.get_blocking(fd)
+        os.set_blocking(fd, False)
+        deadline = time.monotonic() + max(0.0, timeout)
+        chunks = bytearray()
+        while True:
+            try:
+                chunk = os.read(fd, min(65_536, max_bytes - len(chunks) + 1))
+            except BlockingIOError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                ready, _, _ = select.select([fd], [], [], remaining)
+                if not ready:
+                    break
+                continue
+            if not chunk:
+                break
+            chunks.extend(chunk)
+            if len(chunks) > max_bytes:
+                raise ValueError("hook payload exceeds size limit")
+        encoding = getattr(sys.stdin, "encoding", None) or "utf-8"
+        return bytes(chunks).decode(encoding)
+    except (OSError, UnicodeError):
         return ""
+    finally:
+        if fd is not None and was_blocking is not None:
+            try:
+                os.set_blocking(fd, was_blocking)
+            except OSError:
+                pass
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _sidecar_up() -> bool:
@@ -41,38 +76,59 @@ def _sidecar_up() -> bool:
         return False
 
 
-def _ensure_sidecar() -> None:
+def _ensure_sidecar(deadline: float = 0.5) -> bool:
     if _sidecar_up():
-        return
+        return True
     # detached; the singleton flock means only one survives if several race.
     # No args, the sidecar loads its own config (project, redaction, idle).
-    subprocess.Popen(
-        [sys.executable, "-m", "weave_agent_adapter", "sidecar"],
-        start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
-    for _ in range(300):                 # wait up to ~3s for it to accept
+    log_stream = None
+    try:
+        log_stream = open_diagnostic_stream()
+        subprocess.Popen(
+            [sys.executable, "-m", "weave_agent_adapter", "sidecar"],
+            start_new_session=True, stdout=subprocess.DEVNULL, stderr=log_stream,
+        )
+    except Exception as exc:
+        diagnose("sidecar_spawn", error=exc)
+        return False
+    finally:
+        if log_stream is not None:
+            log_stream.close()
+    stop_at = time.monotonic() + max(0.0, deadline)
+    while time.monotonic() < stop_at:
         if _sidecar_up():
-            return
-        time.sleep(0.01)
+            return True
+        time.sleep(min(0.01, max(0.0, stop_at - time.monotonic())))
+    return _sidecar_up()
 
 
 def cmd_hook(args) -> int:
+    captured_at = time.time()
+    if _env_truthy("WEAVE_AGENT_ADAPTER_DISABLE"):
+        return 0
     # the command-hook adapter: forward the raw payload, never block or break
     try:
         raw = _read_stdin()
         try:
-            payload = json.loads(raw) if raw.strip() else {}
-        except Exception:
-            payload = {}
+            payload = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            diagnose("payload_parse", harness=args.harness, event=args.event, error=exc)
+            return 0
+        if not isinstance(payload, dict):
+            diagnose("payload_type", harness=args.harness, event=args.event)
+            return 0
         event = {
             "v": 1, "harness": args.harness, "event": args.event,
-            "captured_at": time.time(), "payload": payload, "pid": os.getpid(),
+            "captured_at": captured_at, "payload": payload, "pid": os.getpid(),
         }
         if not transport.send(event):
-            _ensure_sidecar()
-            transport.send(event)
-    except Exception:
-        pass
+            if _ensure_sidecar():
+                if not transport.send(event):
+                    diagnose("socket_send", harness=args.harness, event=args.event)
+            else:
+                diagnose("sidecar_unavailable", harness=args.harness, event=args.event)
+    except Exception as exc:
+        diagnose("hook", harness=args.harness, event=args.event, error=exc)
     return 0
 
 
