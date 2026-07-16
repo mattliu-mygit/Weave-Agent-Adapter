@@ -1,4 +1,4 @@
-"""Config (spec 07): env > config.toml > defaults. Read by the sidecar only.
+"""Sidecar configuration and authoritative Weave project routing.
 
 The hook stays config-free; it just spawns the sidecar, which loads this. TOML
 parsing needs `tomli` on Python < 3.11 (a sidecar-only dependency).
@@ -6,6 +6,7 @@ parsing needs `tomli` on Python < 3.11 (a sidecar-only dependency).
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 try:
@@ -21,9 +22,18 @@ DEFAULT_PATH = os.path.expanduser(
 )
 
 
+def resolve_project(configured: str, cwd=None, per_repo: bool = False) -> str:
+    """Resolve the project route once, preserving an explicitly chosen entity."""
+    entity, separator, project = configured.partition("/")
+    if not separator:
+        entity, project = "", configured
+    if per_repo and cwd:
+        leaf = os.path.basename(os.path.normpath(cwd))
+        project = re.sub(r"[^A-Za-z0-9_.-]", "-", leaf).strip("-") or project
+    return f"{entity}/{project}" if entity else project
+
 @dataclass
 class Config:
-    active_harness: str = "claude-code"
     project: str = "weave-agent-adapter"   # "entity/project" or bare "project"
     project_per_repo: bool = False         # trace each repo (cwd leaf) to its own project
     redact_enabled: bool = True
@@ -52,7 +62,6 @@ def load_config(path=None) -> Config:
     side = d.get("sidecar", {})
     c = Config()
 
-    c.active_harness = os.environ.get("WEAVE_AGENT_ADAPTER_HARNESS", d.get("active_harness", c.active_harness))
     c.project = os.environ.get("WEAVE_PROJECT", weave.get("project", c.project))
     entity = os.environ.get("WANDB_ENTITY", weave.get("entity"))
     if entity and "/" not in c.project:

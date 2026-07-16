@@ -1,7 +1,7 @@
-"""weave-agent-adapter CLI (spec 08): the hook dispatcher and the sidecar runner.
+"""Hook dispatcher, sidecar runner, and profile-driven installer CLI.
 
     weave-agent-adapter hook --harness <name> --event <event>   # per hook event
-    weave-agent-adapter sidecar [--project ...] [--debug-file ...] [--idle-s ...]
+    weave-agent-adapter sidecar [--project ...] [--debug-file ...]
 
 The hook lazily spawns the sidecar the first time the socket is unreachable, so
 running is zero-touch: the session-start event brings the sidecar up.
@@ -66,6 +66,22 @@ def _env_truthy(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _append_private_jsonl(path: str, record: dict) -> None:
+    """Append one JSON record while keeping the payload-bearing file user-only."""
+    flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    fd = os.open(path, flags, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
+            fd = None
+            fh.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
 def _sidecar_up() -> bool:
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
@@ -119,7 +135,7 @@ def cmd_hook(args) -> int:
             return 0
         event = {
             "v": 1, "harness": args.harness, "event": args.event,
-            "captured_at": captured_at, "payload": payload, "pid": os.getpid(),
+            "captured_at": captured_at, "payload": payload,
         }
         if not transport.send(event):
             if _ensure_sidecar():
@@ -134,7 +150,7 @@ def cmd_hook(args) -> int:
 
 def cmd_sidecar(args) -> int:
     from .config import load_config
-    from .emit import GenAITurnEmitter
+    from .emit import WeaveTurnEmitter, serializable_payload
     from .redact import Redactor
     from .sidecar import Sidecar
 
@@ -143,33 +159,37 @@ def cmd_sidecar(args) -> int:
 
     debug_file = args.debug_file or os.environ.get("WEAVE_AGENT_ADAPTER_DEBUG_FILE")
     if debug_file:
-        # render the same turn trees, but append them to a local file instead
-        def _to_file(node, project_id, _path=debug_file):
-            with open(_path, "a") as fh:
-                fh.write(json.dumps({"project": project_id, "turn": node}, default=str) + "\n")
-        turn_emitters = [GenAITurnEmitter(emit=_to_file)]
+        def _to_file(payload, project_id, _path=debug_file):
+            record = {"project": project_id, "turn": serializable_payload(payload)}
+            _append_private_jsonl(_path, record)
+        emitter = WeaveTurnEmitter(emit=_to_file)
     else:
-        turn_emitters = [GenAITurnEmitter()]
+        emitter = WeaveTurnEmitter()
 
     redactor = Redactor(deny_keys=cfg.redact_keys, enabled=cfg.redact_enabled)
     sc = Sidecar(project, transport.SOCKET_PATH, profiles_dir=args.profiles_dir,
                  idle_s=cfg.idle_shutdown_s, redactor=redactor, session_rate=cfg.session_rate,
                  session_ttl=cfg.session_ttl_s, project_per_repo=cfg.project_per_repo,
-                 turn_emitters=turn_emitters, turn_linger=cfg.turn_linger_s)
+                 emitter=emitter, turn_linger=cfg.turn_linger_s)
     signal.signal(signal.SIGTERM, lambda *_: sc.stop())
     signal.signal(signal.SIGINT, lambda *_: sc.stop())
     try:
         sc.serve()
     finally:
-        sc.flush_emitters()
+        sc.flush_emitter()
     return 0
 
 
 def cmd_install(args) -> int:
     from .install import install
+    from .profile import load_profile
+
     p = install(args.harness, user=not args.local, profiles_dir=args.profiles_dir,
                 path=args.settings_path)
     print(f"registered {args.harness} hooks in {p}")
+    note = load_profile(args.harness, args.profiles_dir).registration.get("post_install")
+    if note:
+        print(note)
     return 0
 
 
@@ -178,13 +198,6 @@ def cmd_uninstall(args) -> int:
     p = uninstall(args.harness, user=not args.local, profiles_dir=args.profiles_dir,
                   path=args.settings_path)
     print(f"removed weave-agent-adapter hooks from {p}")
-    return 0
-
-
-def cmd_plugin(args) -> int:
-    from .install import write_plugin
-    d = write_plugin(args.harness, args.dest, profiles_dir=args.profiles_dir)
-    print(f"wrote {args.harness} plugin to {d}")
     return 0
 
 
@@ -212,12 +225,6 @@ def main(argv=None) -> int:
         sp.add_argument("--profiles-dir")
         sp.add_argument("--settings-path")      # override target (testing)
         sp.set_defaults(fn=fn)
-
-    pl = sub.add_parser("plugin", help="write a Claude Code plugin dir (zero-config install)")
-    pl.add_argument("--harness", default="claude-code")
-    pl.add_argument("--dest", required=True, help="output plugin directory")
-    pl.add_argument("--profiles-dir")
-    pl.set_defaults(fn=cmd_plugin)
 
     args = p.parse_args(argv)
     return args.fn(args)

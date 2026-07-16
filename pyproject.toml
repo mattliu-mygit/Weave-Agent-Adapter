@@ -5,9 +5,9 @@ build-backend = "hatchling.build"
 [project]
 name = "weave-agent-adapter"
 version = "0.1.0"
-description = "Harness-agnostic plugin that traces agent-harness sessions to W&B Weave"
+description = "Harness-agnostic adapter that traces coding-agent sessions to W&B Weave"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Matt Liu", email = "mattliujhu@gmail.com" }]
@@ -32,11 +32,7 @@ Issues = "https://github.com/mattliu-mygit/Weave-Agent-Adapter/issues"
 
 # The hook path is stdlib-only; only the sidecar needs dependencies.
 [project.optional-dependencies]
-sidecar = [
-    "wandb",                               # auth (netrc) + default-entity lookup
-    "opentelemetry-sdk",                   # GenAI turn emission (OTLP)
-    "opentelemetry-exporter-otlp-proto-http",
-]
+sidecar = ["weave>=0.53.1"]
 dev = ["pytest>=7"]
 
 [project.scripts]

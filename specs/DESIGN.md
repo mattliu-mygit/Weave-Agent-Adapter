@@ -2,71 +2,93 @@
 
 ## Product contract
 
-The adapter observes coding-agent hook events and turns them into nested
-OpenTelemetry traces in W&B Weave without modifying the harness. It records
-turns, tools, subagents, permission signals, steering, and hook-captured timing.
-Claude Code and Codex use the same command-hook adapter plus declarative TOML
-profiles.
+The adapter observes coding-agent command hooks and sends each completed turn
+to W&B Weave as a typed agent Turn span. It captures prompts, replies, tools,
+subagents, permission decisions, steering, compaction, and available model/token
+details without modifying the harness. Stable conversation IDs make turns
+visible as conversations and eligible for Signals.
 
-The adapter is passive: tracing never approves, rejects, or changes an agent
-action. A tracing failure must not fail the harness.
+Tracing is passive. It never approves, rejects, rewrites, or delays an agent
+action beyond a short bounded local handoff. Hook, sidecar, enrichment, and
+export failures never fail the harness.
+
+Claude Code and Codex ship as declarative profiles. Another harness can use the
+same implementation when it runs a command for lifecycle events and passes one
+JSON object on standard input.
 
 ## Architecture
 
 ```text
-harness hook -> bounded Unix socket -> sidecar reducer
-             -> OTel GenAI span tree -> batched OTLP/HTTP -> Weave
+harness command hook
+  -> bounded Unix-socket handoff
+  -> singleton sidecar
+  -> profile normalization
+  -> session/turn reducer
+  -> public weave.log_turn mapping
+  -> Weave Agents conversations, spans, and Signals
 ```
 
-Hooks are short-lived, standard-library-only processes. They stamp entry time,
-read one size- and time-bounded JSON object, send a versioned envelope, and exit
-zero with empty stdout. A missing sidecar is started once and retried within a
-short deadline. There is no raw capture file, spool, or synchronous network I/O
-on the hook path.
+The hook path is standard-library-only. It stamps the entry time, reads one
+size- and time-bounded JSON object, sends a versioned envelope, and exits zero
+with empty stdout. A missing sidecar is started once and retried within the
+same short deadline. No hook performs network I/O or writes raw payloads.
 
-The singleton sidecar validates envelopes, loads the named harness profile,
-redacts values, and reduces canonical actions into session/turn/tool/subagent
-state. Stable tool-call IDs are authoritative; ID-less fallbacks must have one
-unambiguous name/input match. Active or pending work prevents idle shutdown.
+The sidecar owns every dependency-bearing operation: profile loading, field
+extraction, redaction, transcript enrichment, state reduction, project
+routing, and export. One sidecar multiplexes harnesses and sessions while
+keeping their reducer state isolated.
 
-Each finalized turn becomes one OTel trace. The root is `invoke_agent`, tools
-are `execute_tool` children, and subagents are nested `invoke_agent` spans.
-Hook timestamps are preserved and the root end encloses every child. Root
-attributes include GenAI conventions plus `wandb.thread_id`,
-`wandb.is_turn=true`, `input.value`, and `output.value`, allowing Weave to index
-the trace in Conversations.
+Profiles map native events and payload fields to a fixed canonical vocabulary.
+The reducer contains no Claude Code or Codex event names. Harnesses that omit
+an event degrade by omission rather than requiring alternate reducer paths.
 
-OTel spans are sent directly to Weave with the standard OTLP/HTTP exporter at
-`https://trace.wandb.ai/otel/v1/traces`. `wandb.entity` and `wandb.project`
-resource attributes route the data. The W&B package supplies authentication and
-default-entity discovery; the Weave SDK call API is not another tracing plane.
+## State and lifecycle
+
+The reducer holds only the current mutable turn for each session. Stable
+harness tool-call IDs are authoritative; ID-less events match only one
+unambiguous running tool with a compatible name and input. Subagents correlate
+strictly by agent ID.
+
+A harness stop closes the turn but does not emit it immediately because
+subagent events can arrive afterward. The next turn, session end, session TTL,
+or a short quiet linger finalizes it. The turn is handed to the emitter once
+and removed from reducer state regardless of SDK acceptance. Weave owns
+agent-span routing, batching, and network retry; the reducer has no partial
+retry queue.
+
+The sidecar exits after its idle deadline only when no mutable or pending turn
+remains. Shutdown finalizes current sessions and requests a bounded exporter
+flush.
 
 ## Reliability and privacy
 
-Delivery is best-effort. `BatchSpanProcessor` handles asynchronous batching and
-normal exporter retry. Provider initialization must succeed before a turn is
-marked accepted; shutdown requests a bounded flush. There is no durable outbox,
-dead-letter log, replay, or exactly-once guarantee.
+Delivery is best-effort. There is no spool, outbox, replay, dead-letter log, or
+exactly-once guarantee. Losing a sidecar process can lose in-flight state, and
+an initialization failure can drop the affected turn. These tradeoffs keep the
+hook path bounded and the runtime small.
 
-Failures are written to a rotating user-only diagnostic log containing phase,
-harness/event/project, and exception class only. Raw payloads and exception
-messages are excluded.
+Redaction occurs before debug or network output. Sensitive keys, common token
+shapes, JWTs, AWS access-key IDs, and complete PEM private-key blocks are
+replaced. Rotating diagnostics contain phase and type metadata, never payload
+values or exception messages. Runtime files are user-only.
 
-Redaction occurs before debug or network sinks. Sensitive dictionary keys,
-known token shapes, JWTs, AWS access-key IDs, and complete PEM private-key
-blocks are replaced. The Unix socket and generated settings files are user-only.
+## Deliberate boundaries
 
-## Extensibility
+- Hook and sidecar remain separate for latency and dependency isolation.
+- Profile normalization and state reduction remain separate so new command-hook
+  harnesses do not add reducer branches.
+- Optional named enrichers may understand a transcript format; the reducer and
+  emitter never branch on a harness name.
+- Reduction and Weave mapping remain separate so lifecycle behavior is tested
+  independently from SDK objects.
+- `weave.log_turn` is the only production tracing plane.
+- Configuration resolves one project route before the emitter; the emitter
+  does not discover or reinterpret routing.
 
-The core knows canonical actions rather than harness event names. A harness that
-passes JSON on stdin needs only a profile describing events, fields, optional
-thread derivation/enrichment, registration paths, and its supported hook list.
-Missing actions degrade by omission; harness-specific branching does not belong
-in the reducer.
+## Non-goals
 
-## Lifecycle
-
-Closed turns wait briefly for late subagent work, then emit. Sessions without a
-session-end event are swept after their TTL and marked incomplete only when work
-was actually left open. The sidecar scales to zero after its idle deadline only
-when no open or unaccepted turn/tool/subagent work remains.
+- Durable or guaranteed delivery.
+- In-process harness instrumentation.
+- Hook mechanisms other than JSON on standard input.
+- A plugin packaging or marketplace workflow.
+- Reconstructing complete reducer state after a crash.

@@ -1,8 +1,6 @@
 # Example weave-agent-adapter config, read by the sidecar (env > this file > defaults).
 # Copy to ~/.weave-agent-adapter/config.toml and edit. The hook needs no config.
 
-active_harness = "claude-code"        # -> weave_agent_adapter/profiles/<name>.toml
-
 [weave]
 entity  = "your-entity"
 project = "claude-code"                # default project (also the fallback when a session has no cwd)
@@ -14,7 +12,7 @@ enabled     = true                     # scrub secrets before sending (default t
 redact_keys = ["api_key", "authorization", "token", "password"]  # extra deny keys; omit for defaults
 
 [sampling]
-session_rate = 1.0                     # fraction of sessions traced (root-only)
+session_rate = 1.0                     # fraction of sessions traced
 
 [sidecar]
 idle_shutdown_s = 120                  # exit after this long with no active sessions

@@ -1,7 +1,7 @@
-"""Redaction (spec 07): scrub likely secrets before values leave the sidecar.
+"""Scrub likely secrets before values leave the sidecar.
 
 Two rules: (1) if a dict key looks sensitive, drop the whole value; (2) scrub
-secret-shaped substrings inside any string. Applied in the tracer, so every sink
+secret-shaped substrings inside any string. Applied in the tracer, so every output
 (Weave, debug, …) receives already-redacted data. Best-effort, not a guarantee , 
 tune the denylist/patterns for your environment.
 """

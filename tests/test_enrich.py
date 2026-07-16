@@ -1,204 +1,227 @@
-"""Transcript enrichment: per-LLM-call chat spans with token usage, and the
-turn linger that finalizes a conversation's last turn without a session end."""
+"""Optional transcript enrichment adds model details without entering the reducer."""
 from __future__ import annotations
 
 import datetime
 import json
 
+import weave
+from weave.conversation import LLM
+
 from conftest import run
+from weave_agent_adapter.emit import WeaveTurnEmitter
+from weave_agent_adapter.model import WireEvent
+from weave_agent_adapter.redact import Redactor
 
 SID = "s1"
 
 
 def _iso(epoch: float) -> str:
     return datetime.datetime.fromtimestamp(
-        epoch, tz=datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+        epoch, tz=datetime.timezone.utc,
+    ).isoformat().replace("+00:00", "Z")
 
 
 def _transcript(tmp_path, rows):
-    p = tmp_path / "t.jsonl"
-    p.write_text("\n".join(json.dumps(r) for r in rows))
-    return str(p)
+    path = tmp_path / "transcript.jsonl"
+    path.write_text("\n".join(json.dumps(row) for row in rows))
+    return str(path)
 
 
-def test_chat_spans_from_transcript(tmp_path):
-    # turn runs t0+1 .. t0+3 (run() stamps one event per second from t0=1000)
-    tp = _transcript(tmp_path, [
+def _mapped(finalized):
+    turn, session = finalized
+    return WeaveTurnEmitter(weave_module=weave)._build_turn(turn, session)
+
+
+def _llms(payload):
+    return [span for span in payload["spans"] if isinstance(span, LLM)]
+
+
+def test_structured_model_activity_from_claude_transcript(tmp_path):
+    transcript = _transcript(tmp_path, [
         {"type": "user", "timestamp": _iso(1001.0), "uuid": "ROOT"},
         {"type": "assistant", "timestamp": _iso(1001.8), "isSidechain": False,
-         "message": {"model": "claude-opus-4-8",
-                     "usage": {"input_tokens": 1200, "output_tokens": 80,
-                               "cache_read_input_tokens": 900},
-                     "stop_reason": "tool_use",
-                     "content": [{"type": "text", "text": "I'll check the file first."},
-                                 {"type": "tool_use", "name": "Read"}]}},
+         "message": {
+             "id": "msg-1",
+             "model": "claude-opus-4-8",
+             "usage": {"input_tokens": 1200, "output_tokens": 80,
+                       "cache_read_input_tokens": 900},
+             "stop_reason": "tool_use",
+             "content": [
+                 {"type": "thinking", "thinking": "I should inspect first."},
+                 {"type": "text", "text": "I'll check the file."},
+                 {"type": "tool_use", "id": "tool-1", "name": "Read",
+                  "input": {"path": "/repo/a.py"}},
+             ],
+         }},
         {"type": "assistant", "timestamp": _iso(1002.6), "isSidechain": False,
-         "message": {"model": "claude-opus-4-8",
-                     "usage": {"input_tokens": 1400, "output_tokens": 40},
-                     "stop_reason": "end_turn",
-                     "content": [{"type": "text", "text": "All done."}]}},
-        # sidechain (subagent) call: must be excluded
+         "message": {
+             "id": "msg-2",
+             "model": "claude-opus-4-8",
+             "usage": {"input_tokens": 1400, "output_tokens": 40},
+             "stop_reason": "end_turn",
+             "content": [{"type": "text", "text": "All done."}],
+         }},
         {"type": "assistant", "timestamp": _iso(1002.7), "isSidechain": True,
          "message": {"model": "claude-haiku", "usage": {"input_tokens": 5},
                      "content": []}},
-        # outside the turn window: must be excluded
         {"type": "assistant", "timestamp": _iso(1900.0), "isSidechain": False,
-         "message": {"model": "claude-opus-4-8", "usage": {"input_tokens": 9},
+         "message": {"model": "outside", "usage": {"input_tokens": 9},
                      "content": []}},
     ])
-    tr, turns = run([
-        ("SessionStart", {"session_id": SID, "transcript_path": tp}),
-        ("UserPromptSubmit", {"session_id": SID, "prompt": "p", "transcript_path": tp}),
-        ("PreToolUse", {"session_id": SID, "tool_name": "Read", "tool_use_id": "t1"}),
+    _, finalized = run([
+        ("SessionStart", {"session_id": SID, "transcript_path": transcript}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p",
+                              "transcript_path": transcript}),
         ("Stop", {"session_id": SID}),
         ("SessionEnd", {"session_id": SID}),
     ])
-    (node, _), = turns
-    chats = [c for c in node["children"] if c["name"].startswith("chat ")]
-    assert len(chats) == 2                               # sidechain + out-of-window excluded
-    a = chats[0]["attributes"]
-    assert a["gen_ai.usage.input_tokens"] == 1200
-    assert a["gen_ai.usage.output_tokens"] == 80
-    assert a["gen_ai.usage.cache_read.input_tokens"] == 900
-    assert a["gen_ai.response.finish_reasons"] == "tool_use"
-    assert a["gen_ai.completion.0.content"] == "I'll check the file first."   # intermediate text
-    assert chats[0]["end"] >= chats[0]["start"]
-    assert chats[1]["attributes"]["gen_ai.response.finish_reasons"] == "end_turn"
+    llms = _llms(_mapped(finalized[0]))
+
+    assert len(llms) == 2
+    first = llms[0]
+    assert first.provider_name == "anthropic"
+    assert first.response_id == "msg-1"
+    assert first.response_model == "claude-opus-4-8"
+    assert first.usage.input_tokens == 1200
+    assert first.usage.output_tokens == 80
+    assert first.usage.cache_read_input_tokens == 900
+    assert first.finish_reasons == ["tool_use"]
+    assert first.reasoning.content == "I should inspect first."
+    assert first.output_messages[0].parts[0].content == "I'll check the file."
+    tool_part = next(part for part in first.output_messages[0].parts
+                     if part.type == "tool_call")
+    assert tool_part.id == "tool-1"
+    assert tool_part.name == "Read"
+    assert json.loads(tool_part.arguments) == {"path": "/repo/a.py"}
 
 
-def test_chat_text_is_redacted(tmp_path):
-    from weave_agent_adapter.redact import Redactor
-    tp = _transcript(tmp_path, [
+def test_enriched_content_is_redacted(tmp_path):
+    secret = "sk-ABCDEFGHIJKLMNOP1234"
+    transcript = _transcript(tmp_path, [
         {"type": "assistant", "timestamp": _iso(1001.5), "isSidechain": False,
-         "message": {"model": "m", "usage": {"input_tokens": 1},
-                     "content": [{"type": "text",
-                                  "text": "your key is sk-ABCDEFGHIJKLMNOP1234"}]}},
+         "message": {
+             "id": "msg-secret",
+             "model": "m",
+             "usage": {"input_tokens": 1},
+             "content": [
+                 {"type": "thinking", "thinking": f"inspect {secret}"},
+                 {"type": "text", "text": f"found {secret}"},
+                 {"type": "tool_use", "id": "tool-secret", "name": "Read",
+                  "input": {"api_key": secret}},
+             ],
+         }},
     ])
-    tr, turns = run([
-        ("SessionStart", {"session_id": SID, "transcript_path": tp}),
-        ("UserPromptSubmit", {"session_id": SID, "prompt": "p", "transcript_path": tp}),
+    _, finalized = run([
+        ("SessionStart", {"session_id": SID, "transcript_path": transcript}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p",
+                              "transcript_path": transcript}),
         ("Stop", {"session_id": SID}),
         ("SessionEnd", {"session_id": SID}),
     ], redactor=Redactor())
-    (node, _), = turns
-    (chat,) = [c for c in node["children"] if c["name"].startswith("chat ")]
-    assert "sk-ABCDEF" not in chat["attributes"]["gen_ai.completion.0.content"]
+    (llm,) = _llms(_mapped(finalized[0]))
+    tool_part = next(part for part in llm.output_messages[0].parts
+                     if part.type == "tool_call")
+
+    assert secret not in llm.reasoning.content
+    assert secret not in llm.output_messages[0].parts[0].content
+    assert secret not in tool_part.arguments
 
 
 def test_message_id_dedup_prevents_token_inflation(tmp_path):
-    # same message.id appears twice (multi-content-block streaming): only one record
-    tp = _transcript(tmp_path, [
+    transcript = _transcript(tmp_path, [
         {"type": "assistant", "timestamp": _iso(1001.5), "isSidechain": False,
-         "message": {"id": "msg_001", "model": "claude-opus-4-8",
-                     "usage": {"input_tokens": 1200, "output_tokens": 80},
-                     "stop_reason": "tool_use",
+         "message": {"id": "msg-1", "model": "m",
+                     "usage": {"input_tokens": 1200},
                      "content": [{"type": "text", "text": "checking"}]}},
         {"type": "assistant", "timestamp": _iso(1001.5), "isSidechain": False,
-         "message": {"id": "msg_001", "model": "claude-opus-4-8",
-                     "usage": {"input_tokens": 1200, "output_tokens": 80},
-                     "stop_reason": "tool_use",
+         "message": {"id": "msg-1", "model": "m",
+                     "usage": {"input_tokens": 1200},
                      "content": [{"type": "text", "text": "checking"},
-                                 {"type": "tool_use", "name": "Read"}]}},
+                                 {"type": "tool_use", "id": "t", "name": "Read"}]}},
         {"type": "assistant", "timestamp": _iso(1002.0), "isSidechain": False,
-         "message": {"id": "msg_002", "model": "claude-opus-4-8",
-                     "usage": {"input_tokens": 1400, "output_tokens": 40},
-                     "stop_reason": "end_turn",
+         "message": {"id": "msg-2", "model": "m",
+                     "usage": {"input_tokens": 1400},
                      "content": [{"type": "text", "text": "done"}]}},
     ])
-    tr, turns = run([
-        ("SessionStart", {"session_id": SID, "transcript_path": tp}),
-        ("UserPromptSubmit", {"session_id": SID, "prompt": "p", "transcript_path": tp}),
+    _, finalized = run([
+        ("SessionStart", {"session_id": SID, "transcript_path": transcript}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p",
+                              "transcript_path": transcript}),
         ("Stop", {"session_id": SID}),
         ("SessionEnd", {"session_id": SID}),
     ])
-    (node, _), = turns
-    chats = [c for c in node["children"] if c["name"].startswith("chat ")]
-    assert len(chats) == 2                               # 2 distinct messages, not 3 rows
-    total_in = sum(c["attributes"]["gen_ai.usage.input_tokens"] for c in chats)
-    assert total_in == 1200 + 1400                       # no inflation
+    turn, _ = finalized[0]
+
+    assert len(turn.chat_calls) == 2
+    assert sum(call["input_tokens"] for call in turn.chat_calls) == 2600
 
 
-def test_git_branch_from_transcript(tmp_path):
-    # gitBranch rides on transcript rows; the last in-window value wins
-    tp = _transcript(tmp_path, [
+def test_git_branch_comes_from_last_in_window_row(tmp_path):
+    transcript = _transcript(tmp_path, [
         {"type": "user", "timestamp": _iso(1001.2), "gitBranch": "main"},
         {"type": "assistant", "timestamp": _iso(1001.8), "isSidechain": False,
          "gitBranch": "feature/x",
          "message": {"model": "m", "usage": {"input_tokens": 1},
                      "content": [{"type": "text", "text": "ok"}]}},
-        {"type": "user", "timestamp": _iso(1900.0), "gitBranch": "other"},  # out of window
+        {"type": "user", "timestamp": _iso(1900.0), "gitBranch": "other"},
     ])
-    tr, turns = run([
-        ("SessionStart", {"session_id": SID, "transcript_path": tp}),
-        ("UserPromptSubmit", {"session_id": SID, "prompt": "p", "transcript_path": tp}),
+    _, finalized = run([
+        ("SessionStart", {"session_id": SID, "transcript_path": transcript}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p",
+                              "transcript_path": transcript}),
         ("Stop", {"session_id": SID}),
         ("SessionEnd", {"session_id": SID}),
     ])
-    (node, _), = turns
-    assert node["attributes"]["weave_agent_adapter.git_branch"] == "feature/x"
+    turn, _ = finalized[0]
+    assert turn.git_branch == "feature/x"
 
 
-def test_no_git_branch_no_attr(tmp_path):
-    tp = _transcript(tmp_path, [
-        {"type": "assistant", "timestamp": _iso(1001.5), "isSidechain": False,
-         "message": {"model": "m", "usage": {"input_tokens": 1}, "content": []}},
-    ])
-    tr, turns = run([
-        ("SessionStart", {"session_id": SID, "transcript_path": tp}),
-        ("UserPromptSubmit", {"session_id": SID, "prompt": "p", "transcript_path": tp}),
-        ("Stop", {"session_id": SID}),
-        ("SessionEnd", {"session_id": SID}),
-    ])
-    (node, _), = turns
-    assert "weave_agent_adapter.git_branch" not in node["attributes"]
-
-
-def test_enricher_survives_non_dict_json_line(tmp_path):
-    tp = _transcript(tmp_path, [
+def test_malformed_transcript_rows_are_ignored(tmp_path):
+    transcript = _transcript(tmp_path, [
         "just a string",
         42,
         {"type": "assistant", "timestamp": _iso(1001.5), "isSidechain": False,
          "message": {"model": "m", "usage": {"input_tokens": 1},
                      "content": [{"type": "text", "text": "ok"}]}},
     ])
-    tr, turns = run([
-        ("SessionStart", {"session_id": SID, "transcript_path": tp}),
-        ("UserPromptSubmit", {"session_id": SID, "prompt": "p", "transcript_path": tp}),
+    _, finalized = run([
+        ("SessionStart", {"session_id": SID, "transcript_path": transcript}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p",
+                              "transcript_path": transcript}),
         ("Stop", {"session_id": SID}),
         ("SessionEnd", {"session_id": SID}),
     ])
-    (node, _), = turns
-    chats = [c for c in node["children"] if c["name"].startswith("chat ")]
-    assert len(chats) == 1                               # only the valid dict row
+    turn, _ = finalized[0]
+    assert len(turn.chat_calls) == 1
 
 
-def test_no_enrich_section_degrades_gracefully(tmp_path):
-    # codex profile has no [enrich]: turns emit with no chat spans, no errors
-    tr, turns = run([
+def test_profile_without_enricher_keeps_hook_derived_turn():
+    tracer, finalized = run([
         ("SessionStart", {"session_id": SID}),
         ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
         ("Stop", {"session_id": SID}),
     ], harness="codex")
-    tr.sweep(now=10_000.0, ttl=1.0)
-    (node, _), = turns
-    assert [c for c in node["children"] if c["name"].startswith("chat ")] == []
+    tracer.sweep(now=10_000.0, ttl=1.0)
+    turn, _ = finalized[0]
+    assert turn.chat_calls == []
 
 
 def test_turn_linger_finalizes_last_turn_without_session_end():
-    tr, turns = run([
+    tracer, finalized = run([
         ("SessionStart", {"session_id": SID}),
         ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
-        ("Stop", {"session_id": SID}),          # turn closed, session still open
+        ("Stop", {"session_id": SID}),
     ], t0=1000.0)
-    assert turns == []                          # pending
-    assert tr.finalize_idle_turns(now=1000.0 + 60, linger=120.0) == 0   # too soon
-    assert tr.finalize_idle_turns(now=1000.0 + 200, linger=120.0) == 1  # quiet long enough
-    assert len(turns) == 1
-    assert SID in tr.sessions                   # session stays open for future turns
-    # a later turn in the same session still works and emits independently
-    from weave_agent_adapter.core.model import WireEvent
-    for i, (name, p) in enumerate([("UserPromptSubmit", {"session_id": SID, "prompt": "again"}),
-                                   ("Stop", {"session_id": SID}),
-                                   ("SessionEnd", {"session_id": SID})]):
-        tr.handle(WireEvent(1, "claude-code", name, 2000.0 + i, p, 1))
-    assert len(turns) == 2
+    assert finalized == []
+    assert tracer.finalize_idle_turns(now=1060.0, linger=120.0) == 0
+    assert tracer.finalize_idle_turns(now=1200.0, linger=120.0) == 1
+    assert len(finalized) == 1
+    assert SID in tracer.sessions
+
+    for index, (event, payload) in enumerate([
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "again"}),
+        ("Stop", {"session_id": SID}),
+        ("SessionEnd", {"session_id": SID}),
+    ]):
+        tracer.handle(WireEvent("claude-code", event, 2000.0 + index, payload))
+    assert len(finalized) == 2

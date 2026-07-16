@@ -1,10 +1,9 @@
-# Harness profile: Claude Code. See specs/02-harness-profiles.md.
-# Field paths verified against a real Claude Code 2.1.201 capture (M0), except
+# Harness profile: Claude Code. See specs/HARNESS_PROFILES.md.
+# Field paths verified against a real Claude Code 2.1.201 session, except
 # PermissionRequest/PermissionDenied (bypassed in headless, still provisional).
 
 [harness]
 name    = "claude-code"
-adapter = "command-hook"          # runs a command per event with the payload as JSON on stdin
 
 [events]
 SessionStart       = "session_start"
@@ -29,7 +28,6 @@ tool_input         = "tool_input"
 tool_output        = "tool_response"
 tool_use_id        = "tool_use_id"
 transcript         = "transcript_path"
-permission_mode    = "permission_mode"
 cwd                = "cwd"
 agent_id           = "agent_id"            # set on SubagentStop + subagent-interior tools
 agent_type         = "agent_type"          # SubagentStop, e.g. "Explore"

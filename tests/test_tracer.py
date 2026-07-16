@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import json
 
-from conftest import NS, run, subagents_of, tools_of
-from weave_agent_adapter.core.model import ToolStatus
-from weave_agent_adapter.core.model import WireEvent
+from conftest import run, subagents_of, tools_of
+from weave_agent_adapter.model import ToolStatus
+from weave_agent_adapter.model import WireEvent
 from weave_agent_adapter.profile import load_profile
 from weave_agent_adapter.tracer import Tracer
 
@@ -23,12 +23,13 @@ def test_turn_finalized_on_session_end():
         ("Stop", {"session_id": SID, "last_assistant_message": "done"}),
         ("SessionEnd", {"session_id": SID}),
     ])
-    (node, project_id), = turns
-    assert project_id == "ent/proj"
-    assert node["attributes"]["gen_ai.prompt.0.content"] == "do it"
-    assert node["attributes"]["gen_ai.completion.0.content"] == "done"
-    (tool,) = tools_of(node, "Bash")
-    assert tool["attributes"][f"{NS}.tool.status"] == "ok"
+    (turn, session), = turns
+    assert session.project == "ent/proj"
+    assert session.cwd == "/repo"
+    assert turn.input_text == "do it"
+    assert turn.output_text == "done"
+    (tool,) = tools_of(turn, "Bash")
+    assert tool.status == ToolStatus.OK
     assert not tr.sessions                        # popped on session_end
 
 
@@ -55,10 +56,8 @@ def test_midturn_prompt_is_steering_not_new_turn():
         ("Stop", {"session_id": SID}),
         ("SessionEnd", {"session_id": SID}),
     ])
-    (node, _), = turns                            # one turn, not two
-    (ev,) = node["events"]
-    assert ev["name"] == "steering"
-    assert ev["attributes"][f"{NS}.steering.text"] == "actually, wait"
+    (turn, _), = turns                            # one turn, not two
+    assert [item.text for item in turn.steering] == ["actually, wait"]
 
 
 def test_stop_only_subagent_gets_identity_no_output():
@@ -70,10 +69,10 @@ def test_stop_only_subagent_gets_identity_no_output():
         ("Stop", {"session_id": SID}),
         ("SessionEnd", {"session_id": SID}),
     ])
-    (node, _), = turns
-    (sub,) = subagents_of(node, "Explore")
-    assert sub["attributes"][f"{NS}.agent_id"] == "a9"
-    assert "gen_ai.completion.0.content" not in sub["attributes"]
+    (turn, _), = turns
+    (sub,) = subagents_of(turn, "Explore")
+    assert sub["agent_id"] == "a9"
+    assert sub["output"] is None
 
 
 def test_background_subagent_stop_is_ignored():
@@ -86,8 +85,8 @@ def test_background_subagent_stop_is_ignored():
         ("Stop", {"session_id": SID}),
         ("SessionEnd", {"session_id": SID}),
     ])
-    (node, _), = turns
-    assert subagents_of(node) == []
+    (turn, _), = turns
+    assert subagents_of(turn) == []
 
 
 def test_background_stop_does_not_steal_real_subagent():
@@ -111,10 +110,11 @@ def test_background_stop_does_not_steal_real_subagent():
         ("Stop", {"session_id": SID}),
         ("SessionEnd", {"session_id": SID}),
     ])
-    (node, _), = turns
-    (sub,) = subagents_of(node)                   # exactly one subagent node
-    assert len(tools_of(sub, "Bash")) == 2        # both tools inside it
-    assert sub["attributes"]["gen_ai.completion.0.content"] == "done"
+    (turn, _), = turns
+    (sub,) = subagents_of(turn)                   # exactly one subagent record
+    assert len([tool for tool in tools_of(turn, "Bash")
+                if tool.agent_id == sub["agent_id"]]) == 2
+    assert sub["output"] == "done"
 
 
 def test_compaction_recorded_as_turn_event():
@@ -125,9 +125,8 @@ def test_compaction_recorded_as_turn_event():
         ("Stop", {"session_id": SID}),
         ("SessionEnd", {"session_id": SID}),
     ])
-    (node, _), = turns
-    (ev,) = [e for e in node["events"] if e["name"] == "compaction"]
-    assert ev["attributes"][f"{NS}.compaction.trigger"] == "auto"
+    (turn, _), = turns
+    assert turn.compactions == [(1002.0, "auto")]
 
 
 def test_sampling_excludes_session():
@@ -147,8 +146,8 @@ def test_sweep_finalizes_stale_session_and_emits_pending_turn():
     swept = tr.sweep(now=1000.0 + 10_000, ttl=60.0)
     assert swept == 1
     assert not tr.sessions
-    (node, _), = turns
-    assert node["attributes"][f"{NS}.incomplete"] == "true"
+    (turn, _), = turns
+    assert turn.incomplete is True
 
 
 def test_turnless_session_emits_nothing():
@@ -171,9 +170,9 @@ def test_session_autocreated_without_session_start():
         ("Stop", {"session_id": "resumed"}),
         ("SessionEnd", {"session_id": "resumed"}),
     ])
-    (node, _), = turns
-    assert node["attributes"]["gen_ai.prompt.0.content"] == "keep going"
-    assert tools_of(node, "Bash")
+    (turn, _), = turns
+    assert turn.input_text == "keep going"
+    assert tools_of(turn, "Bash")
 
 
 def test_project_per_repo_routes_by_cwd_leaf():
@@ -182,9 +181,9 @@ def test_project_per_repo_routes_by_cwd_leaf():
         ("UserPromptSubmit", {"session_id": SID, "prompt": "hi"}),
         ("Stop", {"session_id": SID}),
         ("SessionEnd", {"session_id": SID}),
-    ], project="default-proj", project_per_repo=True)
-    (_, project_id), = turns
-    assert project_id == "ent/my-repo"            # cwd leaf + default entity
+    ], project="ent/default-proj", project_per_repo=True)
+    (_, session), = turns
+    assert session.project == "ent/my-repo"       # cwd leaf + configured entity
 
 
 def test_thread_id_from_transcript_root(tmp_path):
@@ -201,8 +200,8 @@ def test_thread_id_from_transcript_root(tmp_path):
         ("Stop", {"session_id": SID}),
         ("SessionEnd", {"session_id": SID}),
     ])
-    (node, _), = turns
-    assert node["attributes"]["gen_ai.conversation.id"] == "ROOT-UUID"
+    (_, session), = turns
+    assert session.thread_id == "ROOT-UUID"
 
 
 def test_autocreated_session_creates_synthetic_turn_for_midturn_events():
@@ -215,9 +214,9 @@ def test_autocreated_session_creates_synthetic_turn_for_midturn_events():
         ("Stop", {"session_id": "crash-resumed"}),
         ("SessionEnd", {"session_id": "crash-resumed"}),
     ])
-    (node, _), = turns
-    assert node["attributes"]["gen_ai.prompt.0.content"] == "(resumed)"
-    assert tools_of(node, "Bash")
+    (turn, _), = turns
+    assert turn.input_text == "(resumed)"
+    assert tools_of(turn, "Bash")
 
 
 def test_subagent_stop_with_no_agent_id_ignored():
@@ -229,8 +228,8 @@ def test_subagent_stop_with_no_agent_id_ignored():
         ("Stop", {"session_id": SID}),
         ("SessionEnd", {"session_id": SID}),
     ])
-    (node, _), = turns
-    assert subagents_of(node) == []
+    (turn, _), = turns
+    assert subagents_of(turn) == []
 
 
 def test_redaction_applied_to_tool_input():
@@ -243,36 +242,34 @@ def test_redaction_applied_to_tool_input():
         ("Stop", {"session_id": SID}),
         ("SessionEnd", {"session_id": SID}),
     ], redactor=Redactor())
-    (node, _), = turns
-    args = tools_of(node, "Bash")[0]["attributes"]["gen_ai.tool.call.arguments"]
-    assert "supersecret" not in args
-    assert "ls" in args
+    (turn, _), = turns
+    args = tools_of(turn, "Bash")[0].tool_input
+    assert "supersecret" not in json.dumps(args)
+    assert args["command"] == "ls"
 
 
-def test_failed_emitter_does_not_mark_turn_and_is_retried():
+def test_failed_emission_is_one_shot_and_does_not_block_next_turn():
     class Emitter:
-        accepted = False
         calls = 0
 
         def emit_turn(self, turn, session):
             self.calls += 1
-            return self.accepted
+            return False
 
     emitter = Emitter()
-    tr = Tracer(load_profile("claude-code"), "ent/proj", turn_emitters=[emitter])
+    tr = Tracer(load_profile("claude-code"), "ent/proj", emitter=emitter)
     for index, (event, payload) in enumerate([
         ("SessionStart", {"session_id": SID}),
-        ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "first"}),
         ("Stop", {"session_id": SID}),
     ]):
-        tr.handle(WireEvent(1, "claude-code", event, 1000.0 + index, payload, 1))
+        tr.handle(WireEvent("claude-code", event, 1000.0 + index, payload))
     tr.finalize_idle_turns(now=1200.0, linger=10.0)
-    assert tr.sessions[SID].current_turn.emitted is False
     assert emitter.calls == 1
-    emitter.accepted = True
-    tr.finalize_idle_turns(now=1201.0, linger=10.0)
-    assert tr.sessions[SID].current_turn.emitted is True
-    assert emitter.calls == 2
+    tr.handle(WireEvent("claude-code", "UserPromptSubmit", 1201.0,
+                        {"session_id": SID, "prompt": "second"}))
+    assert emitter.calls == 1
+    assert tr.sessions[SID].current_turn.input_text == "second"
 
 
 def test_fallback_correlation_matches_tool_name_not_lifo():

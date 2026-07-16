@@ -18,7 +18,7 @@ from __future__ import annotations
 import datetime
 import json
 
-from .core.model import Session, Turn
+from .model import Session, Turn
 from .redact import Redactor
 
 _WINDOW_SLACK_S = 2.0        # transcript rows land within a couple seconds of hook times
@@ -85,23 +85,50 @@ class ClaudeTranscriptEnricher:
             t.git_branch = branch
 
     def _record(self, msg, usage, prev_ts, ts, t: Turn) -> dict:
-        text = " ".join(
-            b.get("text", "") for b in (msg.get("content") or [])
-            if isinstance(b, dict) and b.get("type") == "text"
+        content = [
+            block for block in (msg.get("content") or [])
+            if isinstance(block, dict)
+        ]
+        text = "\n".join(
+            block.get("text", "")
+            for block in content
+            if block.get("type") == "text"
         ).strip() or None
+        reasoning = "\n".join(
+            block.get("thinking", "")
+            for block in content
+            if block.get("type") == "thinking"
+        ).strip() or None
+        tool_calls = [
+            {
+                "id": block.get("id") or "",
+                "name": block.get("name") or "",
+                "arguments": self.redactor.scrub(block.get("input") or {}),
+            }
+            for block in content
+            if block.get("type") == "tool_use"
+        ]
         if text:
             text = self.redactor.scrub(text)[:_MAX_TEXT]
+        if reasoning:
+            reasoning = self.redactor.scrub(reasoning)[:_MAX_TEXT]
         started = prev_ts if prev_ts is not None and prev_ts >= t.started_at else t.started_at
         return {
             "model": msg.get("model"),
+            "provider_name": "anthropic",
+            "response_id": msg.get("id"),
+            "response_model": msg.get("model"),
             "started_at": min(started, ts),
             "ended_at": ts,
             "input_tokens": usage.get("input_tokens"),
             "output_tokens": usage.get("output_tokens"),
+            "reasoning_tokens": usage.get("reasoning_output_tokens"),
             "cache_read_tokens": usage.get("cache_read_input_tokens"),
             "cache_creation_tokens": usage.get("cache_creation_input_tokens"),
             "finish_reason": msg.get("stop_reason"),
             "text": text,
+            "reasoning": reasoning,
+            "tool_calls": tool_calls,
         }
 
 

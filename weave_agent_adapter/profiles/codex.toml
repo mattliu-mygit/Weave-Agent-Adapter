@@ -1,4 +1,4 @@
-# Harness profile: OpenAI Codex CLI. See specs/02-harness-profiles.md.
+# Harness profile: OpenAI Codex CLI. See specs/HARNESS_PROFILES.md.
 # Codex's hook system mirrors Claude Code's (stdin JSON, tool_use_id correlation),
 # so this is a profile-only integration, no code. Field paths per the Codex
 # hooks docs (https://developers.openai.com/codex/hooks).
@@ -13,7 +13,6 @@
 
 [harness]
 name    = "codex"
-adapter = "command-hook"          # runs a command per event with the payload as JSON on stdin
 
 [events]
 SessionStart      = "session_start"
@@ -32,9 +31,10 @@ tool_name          = "tool_name"
 tool_input         = "tool_input"
 tool_output        = "tool_response"
 tool_use_id        = "tool_use_id"
-transcript         = "transcript_path"
-permission_mode    = "permission_mode"
 cwd                = "cwd"
+model              = "model"
+permission_mode    = "permission_mode"
+turn_id            = "turn_id"
 prompt             = "prompt"               # UserPromptSubmit (provisional)
 assistant_message  = "last_assistant_message"   # Stop (the turn's final reply)
 agent_id           = "agent_id"
@@ -42,13 +42,11 @@ agent_type         = "agent_type"
 agent_output       = "last_assistant_message"   # SubagentStop
 compaction_trigger = "trigger"              # PreCompact (provisional)
 
-[thread]
-source = "none"                              # Codex transcript format unconfirmed; set to "field"+id_field or "transcript_root" once known
-
 [registration]
 user_path  = "~/.codex/hooks.json"           # install (default scope)
 local_path = ".codex/hooks.json"             # install --local
 command    = "weave-agent-adapter hook --harness codex"   # installer appends --event <event>
+post_install = "Codex skips new or changed non-managed hooks until trusted; review and trust them with /hooks."
 events  = [
   "SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest",
   "PostToolUse", "SubagentStart", "SubagentStop", "PreCompact", "Stop",

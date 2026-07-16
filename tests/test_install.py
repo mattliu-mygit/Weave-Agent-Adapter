@@ -1,4 +1,4 @@
-"""Installer: settings.json merge/idempotency and plugin generation."""
+"""Installer settings.json merge, idempotency, and safe writes."""
 from __future__ import annotations
 
 import json
@@ -7,8 +7,7 @@ import shutil
 
 import pytest
 
-from weave_agent_adapter.install import install, uninstall, write_plugin
-from weave_agent_adapter.profile import load_profile
+from weave_agent_adapter.install import install, uninstall
 
 
 def _read(p):
@@ -64,7 +63,7 @@ def test_install_resolves_target_from_profile_no_code(tmp_path):
     prof_dir.mkdir()
     target = tmp_path / "myh-hooks.json"
     (prof_dir / "myh.toml").write_text(
-        '[harness]\nname = "myh"\nadapter = "command-hook"\n'
+        '[harness]\nname = "myh"\n'
         '[events]\nSessionStart = "session_start"\nPreToolUse = "tool_pre"\n'
         "[registration]\n"
         f'user_path = "{target}"\n'
@@ -76,15 +75,6 @@ def test_install_resolves_target_from_profile_no_code(tmp_path):
     assert p == str(target)
     hooks = _read(str(target))["hooks"]
     assert set(hooks) == {"SessionStart", "PreToolUse"}
-
-
-def test_write_plugin_emits_manifest_and_hooks(tmp_path):
-    dest = str(tmp_path / "plugin")
-    write_plugin("claude-code", dest)
-    manifest = _read(os.path.join(dest, ".claude-plugin", "plugin.json"))
-    assert manifest["name"] == "weave-agent-adapter"
-    hooks = _read(os.path.join(dest, "hooks", "hooks.json"))["hooks"]
-    assert "SessionStart" in hooks and "PreCompact" in hooks
 
 
 def test_install_refuses_to_overwrite_malformed_json(tmp_path):
@@ -116,9 +106,3 @@ def test_atomic_write_preserves_old_file_when_replace_fails(tmp_path, monkeypatc
         install("claude-code", path=str(path))
     assert path.read_text() == original
     assert [p.name for p in tmp_path.iterdir()] == ["settings.json"]
-
-
-def test_checked_in_claude_plugin_events_match_profile():
-    checked_in = _read("plugin/claude-code/hooks/hooks.json")["hooks"]
-    expected = set(load_profile("claude-code").registration["events"])
-    assert set(checked_in) == expected

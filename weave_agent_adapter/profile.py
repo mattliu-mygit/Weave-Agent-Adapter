@@ -1,4 +1,4 @@
-"""Harness profile loader (spec 02).
+"""Load command-hook harness profiles and extract canonical fields.
 
 Loads a declarative profile (TOML) and turns raw harness payloads into
 canonical events + fields, so the sidecar holds no harness-specific
@@ -35,7 +35,6 @@ def _dig(obj: Any, dotted: str) -> Any:
 @dataclass
 class Profile:
     name: str
-    adapter: str          # hook mechanism, e.g. "command-hook" (payload as JSON on stdin)
     events: dict          # native event -> canonical action
     fields: dict          # canonical field -> dotted path in payload
     registration: dict
@@ -68,7 +67,6 @@ class Profile:
         h = d.get("harness", {})
         return cls(
             name=h.get("name", "unknown"),
-            adapter=h.get("adapter", "command-hook"),
             events=dict(d.get("events", {})),
             fields=dict(d.get("fields", {})),
             registration=dict(d.get("registration", {})),

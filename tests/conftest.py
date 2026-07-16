@@ -1,39 +1,43 @@
 """Shared test helpers: drive the tracer with wire events, observe emitted turns."""
 from __future__ import annotations
 
-from weave_agent_adapter.core.model import WireEvent
-from weave_agent_adapter.emit import GenAITurnEmitter
+from weave_agent_adapter.model import WireEvent
 from weave_agent_adapter.profile import load_profile
 from weave_agent_adapter.tracer import Tracer
 
 NS = "weave_agent_adapter"
 
 
+class CapturingEmitter:
+    def __init__(self, finalized):
+        self.finalized = finalized
+
+    def emit_turn(self, turn, session):
+        self.finalized.append((turn, session))
+        return True
+
+
 def run(events, harness="claude-code", session_rate=1.0, redactor=None, t0=1000.0,
         project="ent/proj", project_per_repo=False):
-    """Feed (native_event, payload) pairs through a tracer and collect the turn
-    trees the emitter produced, as (node, project_id) pairs. Each event is
-    stamped one second after the last, so durations are stable."""
-    turns = []
-    emitter = GenAITurnEmitter(default_entity="ent",
-                               emit=lambda node, pid: turns.append((node, pid)))
-    tr = Tracer(load_profile(harness), project, turn_emitters=[emitter],
+    """Feed native events through a tracer and collect finalized domain turns."""
+    finalized = []
+    tr = Tracer(load_profile(harness), project, emitter=CapturingEmitter(finalized),
                 redactor=redactor, session_rate=session_rate,
                 project_per_repo=project_per_repo)
     for i, (name, payload) in enumerate(events):
-        tr.handle(WireEvent(1, harness, name, t0 + i, payload, 1))
-    return tr, turns
+        tr.handle(WireEvent(harness, name, t0 + i, payload))
+    return tr, finalized
 
 
-def tools_of(node, name=None):
-    out = [c for c in node["children"] if c["name"].startswith("execute_tool")]
+def tools_of(turn, name=None):
+    out = list(turn.tool_calls.values())
     if name:
-        out = [c for c in out if c["name"] == f"execute_tool {name}"]
+        out = [tool for tool in out if tool.tool_name == name]
     return out
 
 
-def subagents_of(node, atype=None):
-    out = [c for c in node["children"] if c["name"].startswith("invoke_agent")]
+def subagents_of(turn, atype=None):
+    out = list(turn.subagents.values())
     if atype:
-        out = [c for c in out if c["name"] == f"invoke_agent {atype}"]
+        out = [agent for agent in out if agent["type"] == atype]
     return out

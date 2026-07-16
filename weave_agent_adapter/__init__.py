@@ -1,4 +1,4 @@
-"""Harness-neutral OpenTelemetry tracing for coding-agent sessions."""
+"""Harness-neutral Weave agent tracing for coding-agent sessions."""
 
 from importlib import metadata
 

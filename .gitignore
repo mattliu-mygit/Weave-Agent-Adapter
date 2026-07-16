@@ -207,13 +207,9 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# local Claude Code settings (capture hooks for M0 — machine-specific)
+# local Claude Code settings (machine-specific)
 .claude/settings.local.json
 
-# ---- claude-weave ----
-# throwaway venv used for profiling
+# Local development artifacts
 wvenv/
-# runtime state — never commit captures, state, sockets, or keys
-capture/
-state/
 *.sock

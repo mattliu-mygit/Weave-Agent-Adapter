@@ -14,7 +14,6 @@ def _wire(**overrides):
         "event": "SessionStart",
         "captured_at": 1.0,
         "payload": {"session_id": "s"},
-        "pid": 1,
     }
     data.update(overrides)
     return json.dumps(data).encode()
@@ -61,7 +60,17 @@ def test_idle_timeout_exits_after_work_is_emitted(tmp_path):
     assert sidecar.can_idle_exit(now=10.0) is True
 
 
-def test_flush_emitters_combines_results(tmp_path):
-    emitters = [SimpleNamespace(flush=lambda: True), SimpleNamespace(flush=lambda: False)]
-    sidecar = Sidecar("ent/proj", str(tmp_path / "sidecar.sock"), turn_emitters=emitters)
-    assert sidecar.flush_emitters() is False
+def test_flush_emitter_reports_failure(tmp_path):
+    emitter = SimpleNamespace(flush=lambda: False)
+    sidecar = Sidecar("ent/proj", str(tmp_path / "sidecar.sock"), emitter=emitter)
+    assert sidecar.flush_emitter() is False
+
+
+def test_bare_project_is_deferred_to_weave(tmp_path):
+    sidecar = Sidecar("project", str(tmp_path / "sidecar.sock"))
+
+    first = sidecar._tracer_for("codex")
+    second = sidecar._tracer_for("claude-code")
+
+    assert first.project == "project"
+    assert second.project == "project"

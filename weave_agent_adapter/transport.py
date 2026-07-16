@@ -1,4 +1,4 @@
-"""Hook → sidecar transport (spec 03).
+"""Bounded hook-to-sidecar Unix-socket transport.
 
 The hook side: send one wire event over the local Unix socket, fire-and-forget.
 Bounded so a missing or busy sidecar can never stall a tool call.

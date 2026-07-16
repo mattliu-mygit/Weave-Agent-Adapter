@@ -14,8 +14,11 @@ SID = "cx1"
 
 def test_codex_traces_with_only_a_profile():
     tr, turns = run([
-        ("SessionStart", {"session_id": SID, "source": "startup", "cwd": "/repo"}),
-        ("UserPromptSubmit", {"session_id": SID, "prompt": "refactor it"}),
+        ("SessionStart", {"session_id": SID, "source": "startup", "cwd": "/repo",
+                          "model": "gpt-5.4", "permission_mode": "default"}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "refactor it",
+                              "model": "gpt-5.4", "permission_mode": "plan",
+                              "turn_id": "turn-1"}),
         ("PreToolUse", {"session_id": SID, "tool_name": "Bash", "tool_use_id": "u1",
                         "tool_input": {"command": "pytest"}}),
         ("PermissionRequest", {"session_id": SID, "tool_name": "Bash", "tool_use_id": "u1"}),
@@ -28,11 +31,15 @@ def test_codex_traces_with_only_a_profile():
     ], harness=CX)
     assert turns == []                            # no SessionEnd: pending until sweep
     tr.sweep(now=10_000.0, ttl=1.0)
-    (node, _), = turns
-    assert node["name"] == "invoke_agent codex"
-    assert tools_of(node, "Bash")
-    (sub,) = subagents_of(node, "reviewer")
-    assert sub["attributes"]["gen_ai.completion.0.content"] == "looks good"
+    (turn, session), = turns
+    assert session.harness == "codex"
+    assert turn.model == "gpt-5.4"
+    assert turn.permission_mode == "plan"
+    assert turn.turn_id == "turn-1"
+    assert tools_of(turn, "Bash")
+    (sub,) = subagents_of(turn, "reviewer")
+    assert sub["agent_id"] == "ag1"
+    assert sub["output"] == "looks good"
 
 
 def test_codex_install_targets_codex_hooks_json(tmp_path):

@@ -1,4 +1,4 @@
-"""Installer (spec 08): wire a harness's hooks from the profile's [registration].
+"""Register harness hooks from the profile's `[registration]` contract.
 
 Reads the active profile, emits one command per event, and merges them into the
 settings file the profile names, idempotently (re-running replaces our entries;
@@ -97,25 +97,6 @@ def install(harness: str, user: bool = True, profiles_dir=None, path=None) -> st
         hooks[ev] = others
     _write_json(path, data)
     return path
-
-
-def write_plugin(harness: str, dest: str, profiles_dir=None) -> str:
-    """Emit a Claude Code plugin dir (manifest + hooks.json) for zero-config install.
-
-    Same per-event commands as `install`, but packaged so a user adds the plugin
-    once instead of editing settings.json, the hooks auto-register on load.
-    """
-    reg = load_profile(harness, profiles_dir).registration
-    command, events = reg["command"], reg.get("events", [])
-    manifest = {
-        "name": "weave-agent-adapter",
-        "description": "Trace agent-harness sessions to W&B Weave (session/turn/tool/permission).",
-        "version": "0.1.0",
-    }
-    hooks = {ev: [_entry(command, ev)] for ev in events}
-    _write_json(os.path.join(dest, ".claude-plugin", "plugin.json"), manifest)
-    _write_json(os.path.join(dest, "hooks", "hooks.json"), {"hooks": hooks})
-    return dest
 
 
 def uninstall(harness: str, user: bool = True, profiles_dir=None, path=None) -> str:
