@@ -76,11 +76,20 @@ singleton sidecar, which normalizes events, redacts values, builds the turn,
 and maps it to public Weave Conversation SDK objects. It exits when idle and
 restarts on demand.
 
-Closed turns linger briefly for late subagent events, then are handed to the
-emitter once. The Weave SDK owns agent-span routing, batching, and network
-retry. Delivery is deliberately best-effort: there is no raw capture, spool,
+A turn-end hook hands the completed turn to the emitter immediately and only
+once. The Weave SDK owns agent-span routing, asynchronous export, batching, and
+network retry, so the hook remains fire-and-forget without a second adapter
+queue. Delivery is deliberately best-effort: there is no raw capture, spool,
 outbox, replay, or second tracing plane. Local diagnostics contain metadata
 only, never payload values or exception messages.
+
+The turn root contains the user prompt and mid-turn steering. Assistant text
+is emitted as typed LLM child output so it renders as an assistant message in
+Weave Conversations and remains usable by Signals. Codex also opts into
+best-effort transcript enrichment for intermediate assistant messages, public
+reasoning summaries, model-call usage, and model names. If those native details
+are unavailable, the final turn-end reply is still emitted as a fallback LLM
+child.
 
 ## Configuration
 
@@ -101,7 +110,6 @@ session_rate = 1.0
 [sidecar]
 idle_shutdown_s = 120
 session_ttl_s = 3600
-turn_linger_s = 120
 ```
 
 For a bare project, `weave.init` resolves W&B's authenticated default entity.

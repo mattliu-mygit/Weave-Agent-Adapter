@@ -2,8 +2,8 @@
 
 Reduces normalized hook events into the in-memory domain model (Session/Turn/
 ToolCall) and hands each *finalized* turn to the configured emitter once. A
-turn finalizes when the next turn starts or the session ends/sweeps — not at
-turn_end — because subagents can keep reporting work after the harness's Stop.
+normal turn finalizes at the harness's turn-end event; session end and idle
+sweeps close only turns whose normal end event was never observed.
 
 All harness knowledge lives in the `Profile` (event/field mapping, subagent
 launcher tools, thread-id derivation). Canonical actions: session, turn, tool
@@ -84,6 +84,8 @@ class Tracer:
                     if fields.get(name) is not None:
                         setattr(s.current_turn, name, fields[name])
             s.last_activity = wire.captured_at
+            if canonical == "turn_end":
+                self._emit_pending_turn(s)
 
     # ------- session -------
 
@@ -119,8 +121,9 @@ class Tracer:
 
     def sweep(self, now: float, ttl: float) -> int:
         """Finalize sessions idle past `ttl` (a harness that crashed before
-        session_end), so state can't grow without bound and the pending turn
-        still reaches the emitter. Returns how many were swept."""
+        turn_end/session_end), so state can't grow without bound and an
+        incomplete current turn still reaches the emitter. Returns how many
+        were swept."""
         stale = [sid for sid, s in self.sessions.items() if now - s.last_activity > ttl]
         for sid in stale:
             s = self.sessions.pop(sid)
@@ -142,7 +145,7 @@ class Tracer:
             s.current_turn.steering.append(
                 Steering(kind=SteeringKind.INTERJECTION, at=at, text=prompt))
             return
-        self._emit_pending_turn(s)            # previous turn is final once the next begins
+        self._emit_pending_turn(s)            # defensive close from an unusual event order
         s.current_turn = Turn(started_at=at, input_text=prompt,
                               effort_level=f.get("effort_level"))
 
@@ -159,8 +162,6 @@ class Tracer:
         if not t or t.ended_at is not None:
             return
         t.ended_at = at
-        # NOT emitted yet: subagents can finish after the harness's Stop, so the
-        # turn stays pending until the next turn starts or the session finalizes.
 
     def _emit_pending_turn(self, s: Session) -> bool:
         t = s.current_turn
@@ -179,26 +180,6 @@ class Tracer:
                 pass                          # an emitter must never break the reducer
         s.current_turn = None
         return True
-
-    def finalize_idle_turns(self, now: float, linger: float) -> int:
-        """Emit closed-but-pending turns whose session has been quiet for
-        `linger` seconds — so a conversation's LAST turn appears promptly
-        instead of waiting for session end or the sweep. Async subagent work
-        resets last_activity, so lingering turns still absorb it."""
-        n = 0
-        for s in self.sessions.values():
-            t = s.current_turn
-            if (t and t.ended_at is not None
-                    and not self._turn_has_open_children(t)
-                    and now - s.last_activity > linger):
-                self._emit_pending_turn(s)
-                n += 1
-        return n
-
-    @staticmethod
-    def _turn_has_open_children(t: Turn) -> bool:
-        return (any(tc.status == ToolStatus.RUNNING for tc in t.tool_calls.values())
-                or any(rec.get("ended_at") is None for rec in t.subagents.values()))
 
     def has_active_work(self) -> bool:
         for s in self.sessions.values():

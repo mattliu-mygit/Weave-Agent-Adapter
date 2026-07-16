@@ -99,11 +99,34 @@ class WeaveTurnEmitter:
 
     def _build_turn(self, turn: Turn, session: Session) -> dict:
         types = self._conversation()
+        chat_calls = list(turn.chat_calls)
+        output_text = str(turn.output_text).strip() if turn.output_text is not None else ""
+        has_final_output = any(
+            (chat_text := str(chat.get("text") or "").strip()) == output_text
+            or chat_text.startswith(output_text + "\n")
+            or chat_text.endswith("\n" + output_text)
+            for chat in chat_calls
+        )
+        if output_text and not has_final_output:
+            at = turn.ended_at or turn.started_at
+            fallback_model = turn.model or next(
+                (chat.get("model") for chat in reversed(chat_calls) if chat.get("model")),
+                "",
+            )
+            chat_calls.append({
+                "model": fallback_model,
+                "provider_name": "",
+                "started_at": at,
+                "ended_at": at,
+                "finish_reason": "stop",
+                "text": output_text,
+                "tool_calls": [],
+            })
         child_ends = [
             *(call.ended_at or call.started_at for call in turn.tool_calls.values()),
             *(record.get("ended_at") or record["started_at"]
               for record in turn.subagents.values()),
-            *(chat["ended_at"] for chat in turn.chat_calls),
+            *(chat["ended_at"] for chat in chat_calls),
         ]
         root_end = max([turn.ended_at or turn.started_at, *child_ends])
 
@@ -115,12 +138,10 @@ class WeaveTurnEmitter:
             for item in turn.steering
             if item.text is not None
         )
-        if turn.output_text is not None:
-            messages.append(types.Message.assistant(str(turn.output_text)))
 
         spans = [
             *(self._llm(chat, turn.started_at, root_end, types)
-              for chat in turn.chat_calls),
+              for chat in chat_calls),
             *(self._tool(call, turn.started_at, root_end, types)
               for call in turn.tool_calls.values()),
             *(self._subagent(record, turn.started_at, root_end, types)
@@ -161,7 +182,7 @@ class WeaveTurnEmitter:
             ]
 
         model = next(
-            (chat.get("model") for chat in reversed(turn.chat_calls) if chat.get("model")),
+            (chat.get("model") for chat in reversed(chat_calls) if chat.get("model")),
             turn.model or "",
         )
         return {

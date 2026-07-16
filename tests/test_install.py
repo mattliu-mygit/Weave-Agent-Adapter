@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
+import sys
 
 import pytest
 
@@ -85,12 +85,15 @@ def test_install_refuses_to_overwrite_malformed_json(tmp_path):
     assert path.read_text() == "{ broken"
 
 
-def test_install_uses_resolved_console_script(tmp_path, monkeypatch):
-    monkeypatch.setattr(shutil, "which", lambda name: "/opt/bin/weave-agent-adapter")
+def test_install_uses_the_invoked_console_script_not_path(tmp_path, monkeypatch):
+    invoked = tmp_path / "active-venv" / "weave-agent-adapter"
+    invoked.parent.mkdir()
+    invoked.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(sys, "argv", [str(invoked), "install"])
     path = str(tmp_path / "hooks.json")
     install("codex", path=path)
     command = _read(path)["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-    assert command.startswith("/opt/bin/weave-agent-adapter hook --harness codex")
+    assert command.startswith(f"{invoked} hook --harness codex")
 
 
 def test_atomic_write_preserves_old_file_when_replace_fails(tmp_path, monkeypatch):

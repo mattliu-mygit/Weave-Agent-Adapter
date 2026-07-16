@@ -108,7 +108,6 @@ def test_debug_sidecar_writes_structured_turn_payload(tmp_path, monkeypatch):
         session_rate=1.0,
         session_ttl_s=3600.0,
         project_per_repo=False,
-        turn_linger_s=120.0,
     )
 
     class FakeSidecar:

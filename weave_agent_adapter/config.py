@@ -41,7 +41,6 @@ class Config:
     session_rate: float = 1.0
     idle_shutdown_s: float = 120.0
     session_ttl_s: float = 3600.0          # drop sessions idle past this (crash safety)
-    turn_linger_s: float = 120.0           # finalize a closed turn after this much quiet
 
 
 def _load_file(path: str) -> dict:
@@ -73,5 +72,4 @@ def load_config(path=None) -> Config:
     c.idle_shutdown_s = float(os.environ.get("WEAVE_AGENT_ADAPTER_IDLE_S",
                                              side.get("idle_shutdown_s", c.idle_shutdown_s)))
     c.session_ttl_s = float(side.get("session_ttl_s", c.session_ttl_s))
-    c.turn_linger_s = float(side.get("turn_linger_s", c.turn_linger_s))
     return c

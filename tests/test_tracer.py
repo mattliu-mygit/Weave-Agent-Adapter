@@ -264,7 +264,6 @@ def test_failed_emission_is_one_shot_and_does_not_block_next_turn():
         ("Stop", {"session_id": SID}),
     ]):
         tr.handle(WireEvent("claude-code", event, 1000.0 + index, payload))
-    tr.finalize_idle_turns(now=1200.0, linger=10.0)
     assert emitter.calls == 1
     tr.handle(WireEvent("claude-code", "UserPromptSubmit", 1201.0,
                         {"session_id": SID, "prompt": "second"}))
@@ -297,12 +296,15 @@ def test_ambiguous_fallback_does_not_steal_parallel_tool():
     assert tools[2].status == ToolStatus.OK
 
 
-def test_active_work_distinguishes_pending_from_emitted_turn():
-    tr, _ = run([
+def test_stop_immediately_emits_and_clears_active_work():
+    tr, turns = run([
         ("SessionStart", {"session_id": SID}),
-        ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
-        ("Stop", {"session_id": SID}),
-    ])
-    assert tr.has_active_work() is True
-    tr.finalize_idle_turns(now=10_000.0, linger=1.0)
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p", "turn_id": "turn-1"}),
+        ("Stop", {"session_id": SID, "last_assistant_message": "done",
+                  "turn_id": "turn-1"}),
+    ], harness="codex")
+
+    (turn, _), = turns
+    assert turn.output_text == "done"
+    assert turn.turn_id == "turn-1"
     assert tr.has_active_work() is False

@@ -17,4 +17,3 @@ session_rate = 1.0                     # fraction of sessions traced
 [sidecar]
 idle_shutdown_s = 120                  # exit after this long with no active sessions
 session_ttl_s   = 3600                 # finalize + drop a session idle this long (crash safety)
-turn_linger_s   = 120                  # finalize a closed turn after this much quiet

@@ -26,7 +26,7 @@ ACCEPT_TIMEOUT_S = 0.5
 class Sidecar:
     def __init__(self, project, socket_path, profiles_dir=None, idle_s=120.0,
                  redactor=None, session_rate=1.0, session_ttl=3600.0, sweep_interval=30.0,
-                 project_per_repo=False, emitter=None, turn_linger=120.0):
+                 project_per_repo=False, emitter=None):
         self.project = project
         self.socket_path = socket_path
         self.profiles_dir = profiles_dir
@@ -36,7 +36,6 @@ class Sidecar:
         self.project_per_repo = project_per_repo
         self.emitter = emitter
         self.session_ttl = session_ttl        # drop sessions idle past this (crash safety)
-        self.turn_linger = turn_linger        # finalize a closed turn after this much quiet
         self.sweep_interval = sweep_interval
         self.tracers: dict = {}
         self._stop = threading.Event()
@@ -170,7 +169,6 @@ class Sidecar:
         ttl = self.session_ttl if ttl is None else ttl
         for tr in self.tracers.values():
             try:
-                tr.finalize_idle_turns(now, self.turn_linger)
                 tr.sweep(now, ttl)
             except Exception:
                 pass

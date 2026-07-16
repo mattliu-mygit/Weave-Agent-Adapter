@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 
 import weave
-from weave.conversation import SubAgent, Tool
+from weave.conversation import LLM, SubAgent, Tool
 
 from conftest import CapturingEmitter, run
 from weave_agent_adapter.emit import WeaveTurnEmitter
@@ -34,7 +34,9 @@ def test_hook_events_become_typed_weave_turn():
     payload = _mapped(finalized[0])
 
     assert payload["agent_name"] == "claude-code"
-    assert [message.content for message in payload["messages"]] == ["add tests", "done"]
+    assert [message.content for message in payload["messages"]] == ["add tests"]
+    llm = next(span for span in payload["spans"] if isinstance(span, LLM))
+    assert llm.output_messages[0].parts[0].content == "done"
     tool = next(span for span in payload["spans"] if isinstance(span, Tool))
     assert tool.name == "Bash"
     assert tool.tool_call_id == "t1"
@@ -43,7 +45,7 @@ def test_hook_events_become_typed_weave_turn():
     assert payload["started_at"] < payload["ended_at"]
 
 
-def test_late_subagent_activity_is_included_as_flat_typed_spans():
+def test_activity_after_stop_is_not_reopened_into_the_finished_turn():
     _, finalized = run([
         ("SessionStart", {"session_id": SID}),
         ("UserPromptSubmit", {"session_id": SID, "prompt": "inspect"}),
@@ -59,13 +61,8 @@ def test_late_subagent_activity_is_included_as_flat_typed_spans():
     ])
     payload = _mapped(finalized[0])
 
-    subagent = next(span for span in payload["spans"] if isinstance(span, SubAgent))
-    tool = next(span for span in payload["spans"] if isinstance(span, Tool))
-    assert subagent.name == "Explore"
-    assert subagent.agent_id == "a1"
-    assert tool.name == "Read"
-    assert tool.tool_call_id == "i1"
-    assert payload["ended_at"] >= subagent.ended_at
+    assert not any(isinstance(span, SubAgent) for span in payload["spans"])
+    assert not any(isinstance(span, Tool) for span in payload["spans"])
 
 
 def test_turns_share_conversation_and_keep_filterable_counters():
@@ -124,4 +121,6 @@ def test_third_party_profile_uses_the_same_mapping():
     mapped = _mapped(finalized[0])
     assert mapped["conversation_id"] == "conv"
     assert mapped["agent_name"] == "third-party"
-    assert [message.content for message in mapped["messages"]] == ["hello", "hi"]
+    assert [message.content for message in mapped["messages"]] == ["hello"]
+    llm = next(span for span in mapped["spans"] if isinstance(span, LLM))
+    assert llm.output_messages[0].parts[0].content == "hi"

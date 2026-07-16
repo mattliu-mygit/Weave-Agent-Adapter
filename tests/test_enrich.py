@@ -195,7 +195,7 @@ def test_malformed_transcript_rows_are_ignored(tmp_path):
     assert len(turn.chat_calls) == 1
 
 
-def test_profile_without_enricher_keeps_hook_derived_turn():
+def test_missing_codex_transcript_keeps_hook_derived_turn():
     tracer, finalized = run([
         ("SessionStart", {"session_id": SID}),
         ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
@@ -206,22 +206,116 @@ def test_profile_without_enricher_keeps_hook_derived_turn():
     assert turn.chat_calls == []
 
 
-def test_turn_linger_finalizes_last_turn_without_session_end():
+def test_codex_transcript_adds_turn_scoped_assistant_reasoning_and_usage(tmp_path):
+    transcript = _transcript(tmp_path, [
+        {"timestamp": _iso(900.0), "type": "event_msg",
+         "payload": {"type": "task_started", "turn_id": "other-turn"}},
+        {"timestamp": _iso(901.0), "type": "response_item",
+         "payload": {"type": "message", "role": "assistant", "phase": "final_answer",
+                     "content": [{"type": "output_text", "text": "ignore me"}]}},
+        {"timestamp": _iso(902.0), "type": "event_msg",
+         "payload": {"type": "task_complete", "turn_id": "other-turn",
+                     "last_agent_message": "ignore me"}},
+        {"timestamp": _iso(1000.0), "type": "event_msg",
+         "payload": {"type": "task_started", "turn_id": "turn-1"}},
+        {"timestamp": _iso(1000.1), "type": "turn_context",
+         "payload": {"turn_id": "turn-1", "model": "gpt-5.6-sol"}},
+        {"timestamp": _iso(1001.0), "type": "response_item",
+         "payload": {"type": "reasoning", "id": "reason-1",
+                     "summary": [{"type": "summary_text", "text": "Inspect first."}]}},
+        {"timestamp": _iso(1001.2), "type": "response_item",
+         "payload": {"type": "message", "id": "msg-1", "role": "assistant",
+                     "phase": "commentary",
+                     "content": [{"type": "output_text", "text": "I am checking."}]}},
+        {"timestamp": _iso(1001.4), "type": "event_msg",
+         "payload": {"type": "token_count", "info": {"last_token_usage": {
+             "input_tokens": 100, "cached_input_tokens": 80,
+             "output_tokens": 20, "reasoning_output_tokens": 5,
+         }}}},
+        {"timestamp": _iso(1002.0), "type": "response_item",
+         "payload": {"type": "reasoning", "id": "reason-2",
+                     "summary": [{"type": "summary_text", "text": "Report clearly."}]}},
+        {"timestamp": _iso(1002.2), "type": "response_item",
+         "payload": {"type": "message", "id": "msg-2", "role": "assistant",
+                     "phase": "final_answer",
+                     "content": [{"type": "output_text", "text": "All done."}]}},
+        {"timestamp": _iso(1002.4), "type": "event_msg",
+         "payload": {"type": "token_count", "info": {"last_token_usage": {
+             "input_tokens": 120, "cached_input_tokens": 90,
+             "output_tokens": 30, "reasoning_output_tokens": 7,
+         }}}},
+        {"timestamp": _iso(1002.5), "type": "event_msg",
+         "payload": {"type": "task_complete", "turn_id": "turn-1",
+                     "last_agent_message": "All done."}},
+    ])
+
+    _, finalized = run([
+        ("SessionStart", {"session_id": SID, "transcript_path": transcript}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p",
+                              "turn_id": "turn-1", "transcript_path": transcript}),
+        ("Stop", {"session_id": SID, "turn_id": "turn-1",
+                  "last_assistant_message": "All done.",
+                  "transcript_path": transcript}),
+    ], harness="codex", t0=1000.0)
+    turn, session = finalized[0]
+
+    assert session.transcript == transcript
+    assert turn.output_text == "All done."
+    assert len(turn.chat_calls) == 2
+    first, second = turn.chat_calls
+    assert first["model"] == "gpt-5.6-sol"
+    assert first["provider_name"] == "openai"
+    assert first["response_id"] == "msg-1"
+    assert first["text"] == "I am checking."
+    assert first["reasoning"] == "Inspect first."
+    assert first["input_tokens"] == 100
+    assert first["cache_read_tokens"] == 80
+    assert first["output_tokens"] == 20
+    assert first["reasoning_tokens"] == 5
+    assert second["text"] == "All done."
+    assert second["reasoning"] == "Report clearly."
+    assert second["input_tokens"] == 120
+
+
+def test_codex_transcript_content_is_redacted(tmp_path):
+    secret = "sk-ABCDEFGHIJKLMNOP1234"
+    transcript = _transcript(tmp_path, [
+        {"timestamp": _iso(1000.0), "type": "event_msg",
+         "payload": {"type": "task_started", "turn_id": "turn-1"}},
+        {"timestamp": _iso(1001.0), "type": "response_item",
+         "payload": {"type": "reasoning",
+                     "summary": [{"type": "summary_text", "text": f"inspect {secret}"}]}},
+        {"timestamp": _iso(1001.2), "type": "response_item",
+         "payload": {"type": "message", "role": "assistant", "phase": "final_answer",
+                     "content": [{"type": "output_text", "text": f"found {secret}"}]}},
+        {"timestamp": _iso(1001.4), "type": "event_msg",
+         "payload": {"type": "token_count", "info": {"last_token_usage": {}}}},
+        {"timestamp": _iso(1001.5), "type": "event_msg",
+         "payload": {"type": "task_complete", "turn_id": "turn-1"}},
+    ])
+    _, finalized = run([
+        ("SessionStart", {"session_id": SID, "transcript_path": transcript}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p", "turn_id": "turn-1"}),
+        ("Stop", {"session_id": SID, "turn_id": "turn-1"}),
+    ], harness="codex", redactor=Redactor(), t0=1000.0)
+    (chat,) = finalized[0][0].chat_calls
+
+    assert secret not in chat["text"]
+    assert secret not in chat["reasoning"]
+
+
+def test_stop_finalizes_last_turn_without_session_end():
     tracer, finalized = run([
         ("SessionStart", {"session_id": SID}),
         ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
         ("Stop", {"session_id": SID}),
     ], t0=1000.0)
-    assert finalized == []
-    assert tracer.finalize_idle_turns(now=1060.0, linger=120.0) == 0
-    assert tracer.finalize_idle_turns(now=1200.0, linger=120.0) == 1
     assert len(finalized) == 1
     assert SID in tracer.sessions
 
     for index, (event, payload) in enumerate([
         ("UserPromptSubmit", {"session_id": SID, "prompt": "again"}),
         ("Stop", {"session_id": SID}),
-        ("SessionEnd", {"session_id": SID}),
     ]):
         tracer.handle(WireEvent("claude-code", event, 2000.0 + index, payload))
     assert len(finalized) == 2

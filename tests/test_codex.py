@@ -1,6 +1,9 @@
-"""Second harness (Codex), proves the adapter is profile-only: no code path is
-Claude-specific. Codex has SubagentStart (real open/close subagent) and no
-SessionEnd (sessions finalize via the sweep)."""
+"""Codex exercises the same reducer through its declarative profile.
+
+Codex exposes explicit subagent lifecycle events and no SessionEnd; Stop emits
+a normal turn immediately, while the TTL sweep remains crash safety for turns
+that never receive Stop.
+"""
 from __future__ import annotations
 
 import json
@@ -29,8 +32,6 @@ def test_codex_traces_with_only_a_profile():
                           "last_assistant_message": "looks good"}),
         ("Stop", {"session_id": SID, "last_assistant_message": "done"}),
     ], harness=CX)
-    assert turns == []                            # no SessionEnd: pending until sweep
-    tr.sweep(now=10_000.0, ttl=1.0)
     (turn, session), = turns
     assert session.harness == "codex"
     assert turn.model == "gpt-5.4"

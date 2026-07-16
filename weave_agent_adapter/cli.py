@@ -170,7 +170,7 @@ def cmd_sidecar(args) -> int:
     sc = Sidecar(project, transport.SOCKET_PATH, profiles_dir=args.profiles_dir,
                  idle_s=cfg.idle_shutdown_s, redactor=redactor, session_rate=cfg.session_rate,
                  session_ttl=cfg.session_ttl_s, project_per_repo=cfg.project_per_repo,
-                 emitter=emitter, turn_linger=cfg.turn_linger_s)
+                 emitter=emitter)
     signal.signal(signal.SIGTERM, lambda *_: sc.stop())
     signal.signal(signal.SIGINT, lambda *_: sc.stop())
     try:

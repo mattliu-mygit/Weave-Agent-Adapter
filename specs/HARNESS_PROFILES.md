@@ -47,9 +47,13 @@ tool_input         = "tool_input"
 tool_output        = "tool_response"
 tool_use_id        = "tool_use_id"
 cwd                = "cwd"
+transcript         = "transcript_path"
 model              = "model"
 permission_mode    = "permission_mode"
 turn_id            = "turn_id"
+
+[enrich]
+source = "native-transcript-v1"
 
 [registration]
 user_path  = "~/.my-harness/hooks.json"
@@ -66,7 +70,10 @@ turn-ID, and effort data.
 
 Optional `[thread]`, `[enrich]`, and `[config_surface]` sections select shipped
 interpretation strategies. Unknown strategy names degrade to no enrichment;
-they do not create dynamic code-loading behavior.
+they do not create dynamic code-loading behavior. Transcript enrichment is
+best-effort and must degrade to the hook-derived turn when a native transcript
+is absent, unreadable, or changes shape. Hooks remain authoritative for
+lifecycle and tool state.
 
 ## Registration
 

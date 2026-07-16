@@ -49,16 +49,16 @@ harness tool-call IDs are authoritative; ID-less events match only one
 unambiguous running tool with a compatible name and input. Subagents correlate
 strictly by agent ID.
 
-A harness stop closes the turn but does not emit it immediately because
-subagent events can arrive afterward. The next turn, session end, session TTL,
-or a short quiet linger finalizes it. The turn is handed to the emitter once
-and removed from reducer state regardless of SDK acceptance. Weave owns
-agent-span routing, batching, and network retry; the reducer has no partial
+A harness turn-end event is the authoritative normal boundary. It closes and
+hands the turn to the emitter immediately, then removes it from reducer state
+regardless of SDK acceptance. Events observed after that boundary are not
+attached retroactively. Session TTL and shutdown finalize only a current turn
+whose normal end event was never observed. Weave owns agent-span routing,
+asynchronous export, batching, and network retry; the reducer has no partial
 retry queue.
 
-The sidecar exits after its idle deadline only when no mutable or pending turn
-remains. Shutdown finalizes current sessions and requests a bounded exporter
-flush.
+The sidecar exits after its idle deadline only when no mutable turn remains.
+Shutdown finalizes current sessions and requests a bounded exporter flush.
 
 ## Reliability and privacy
 
@@ -77,8 +77,9 @@ values or exception messages. Runtime files are user-only.
 - Hook and sidecar remain separate for latency and dependency isolation.
 - Profile normalization and state reduction remain separate so new command-hook
   harnesses do not add reducer branches.
-- Optional named enrichers may understand a transcript format; the reducer and
-  emitter never branch on a harness name.
+- Optional named enrichers may understand a native transcript format; the
+  reducer and emitter never branch on a harness name. Enrichment is
+  best-effort because those formats are not part of this adapter's contract.
 - Reduction and Weave mapping remain separate so lifecycle behavior is tested
   independently from SDK objects.
 - `weave.log_turn` is the only production tracing plane.

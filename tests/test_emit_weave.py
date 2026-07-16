@@ -81,7 +81,7 @@ def test_builds_public_conversation_sdk_objects():
 
     assert payload["conversation_id"] == "conversation-1"
     assert [message.role for message in payload["messages"]] == [
-        "user", "user", "assistant",
+        "user", "user",
     ]
     assert all(isinstance(message, Message) for message in payload["messages"])
     assert any(isinstance(span, LLM) for span in payload["spans"])
@@ -91,6 +91,68 @@ def test_builds_public_conversation_sdk_objects():
     assert payload["attributes"]["weave_agent_adapter.compaction_count"] == 1
     assert payload["attributes"]["weave_agent_adapter.compaction_triggers"] == ["auto"]
     assert payload["attributes"]["weave_agent_adapter.cwd"] == "/repo"
+
+
+def test_final_response_is_an_llm_output_not_a_turn_input():
+    turn = Turn(
+        started_at=10.0,
+        input_text="build it",
+        output_text="done",
+        model="gpt-5.6-sol",
+        ended_at=20.0,
+    )
+
+    payload = WeaveTurnEmitter(weave_module=weave)._build_turn(turn, _session())
+    (llm,) = [span for span in payload["spans"] if isinstance(span, LLM)]
+
+    assert [message.role for message in payload["messages"]] == ["user"]
+    assert llm.model == "gpt-5.6-sol"
+    assert llm.output_messages[0].role == "assistant"
+    assert llm.output_messages[0].parts[0].content == "done"
+
+
+def test_final_response_already_at_end_of_enriched_cycle_is_not_duplicated():
+    turn = Turn(
+        started_at=10.0,
+        input_text="build it",
+        output_text="done",
+        model="gpt-5.6-sol",
+        ended_at=20.0,
+        chat_calls=[{
+            "model": "gpt-5.6-sol",
+            "provider_name": "openai",
+            "started_at": 11.0,
+            "ended_at": 20.0,
+            "text": "Still working.\n\ndone",
+            "tool_calls": [],
+        }],
+    )
+
+    payload = WeaveTurnEmitter(weave_module=weave)._build_turn(turn, _session())
+
+    assert len([span for span in payload["spans"] if isinstance(span, LLM)]) == 1
+
+
+def test_final_response_with_transcript_metadata_suffix_is_not_duplicated():
+    turn = Turn(
+        started_at=10.0,
+        input_text="build it",
+        output_text="done",
+        model="gpt-5.6-sol",
+        ended_at=20.0,
+        chat_calls=[{
+            "model": "gpt-5.6-sol",
+            "provider_name": "openai",
+            "started_at": 11.0,
+            "ended_at": 20.0,
+            "text": "done\n\n<metadata>",
+            "tool_calls": [],
+        }],
+    )
+
+    payload = WeaveTurnEmitter(weave_module=weave)._build_turn(turn, _session())
+
+    assert len([span for span in payload["spans"] if isinstance(span, LLM)]) == 1
 
 
 def test_preserves_llm_content_without_inferring_inputs():

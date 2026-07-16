@@ -37,10 +37,14 @@ permission_mode    = "permission_mode"
 turn_id            = "turn_id"
 prompt             = "prompt"               # UserPromptSubmit (provisional)
 assistant_message  = "last_assistant_message"   # Stop (the turn's final reply)
+transcript         = "transcript_path"
 agent_id           = "agent_id"
 agent_type         = "agent_type"
 agent_output       = "last_assistant_message"   # SubagentStop
 compaction_trigger = "trigger"              # PreCompact (provisional)
+
+[enrich]
+source = "codex-transcript"                  # assistant text, reasoning summaries, usage
 
 [registration]
 user_path  = "~/.codex/hooks.json"           # install (default scope)

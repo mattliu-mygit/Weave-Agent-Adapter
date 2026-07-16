@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import os
 import shlex
-import shutil
 import sys
 import tempfile
 
@@ -74,9 +73,13 @@ def _resolved_command(command: str) -> str:
     parts = shlex.split(command)
     if not parts or parts[0] != "weave-agent-adapter":
         return command
-    executable = shutil.which(parts[0])
-    prefix = shlex.quote(executable) if executable else (
-        f"{shlex.quote(sys.executable)} -m weave_agent_adapter")
+    # Pin hooks to the exact console script that invoked installation. Looking
+    # it up again on PATH can silently select a different, stale installation.
+    invoked = os.path.abspath(sys.argv[0])
+    if os.path.basename(invoked) == "weave-agent-adapter" and os.path.isfile(invoked):
+        prefix = shlex.quote(invoked)
+    else:
+        prefix = f"{shlex.quote(sys.executable)} -m weave_agent_adapter"
     suffix = " ".join(shlex.quote(part) for part in parts[1:])
     return f"{prefix} {suffix}" if suffix else prefix
 
