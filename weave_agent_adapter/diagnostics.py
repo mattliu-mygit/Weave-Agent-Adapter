@@ -26,12 +26,14 @@ def _handler() -> RotatingFileHandler:
 
 
 def diagnose(phase: str, *, harness: str = None, event: str = None,
-             error: BaseException = None) -> None:
+             project: str = None, error: BaseException = None) -> None:
     fields = [f"phase={phase}"]
     if harness:
         fields.append(f"harness={harness}")
     if event:
         fields.append(f"event={event}")
+    if project:
+        fields.append(f"project={project}")
     if error is not None:
         fields.append(f"error={type(error).__name__}")
     handler = None

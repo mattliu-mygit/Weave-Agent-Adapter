@@ -19,9 +19,10 @@ import json
 import os
 
 from .core.model import Session, ToolStatus, Turn
+from .diagnostics import diagnose
 
 NS = "weave_agent_adapter"
-DEFAULT_ENDPOINT = "https://trace.wandb.ai/agents/otel/v1/traces"
+DEFAULT_ENDPOINT = "https://trace.wandb.ai/otel/v1/traces"
 _UNSET = object()
 _MAX_TOOL_OUTPUT = 32_000
 
@@ -61,12 +62,17 @@ class GenAITurnEmitter:
         result = (self._emit or self._emit_otel)(node, self._project_id(session))
         return result is not False
 
-    def flush(self) -> None:
+    def flush(self) -> bool:
+        ok = True
         for p in self._providers.values():
             try:
-                p.force_flush()
-            except Exception:
-                pass
+                if p.force_flush() is False:
+                    ok = False
+                    diagnose("export_flush")
+            except Exception as exc:
+                ok = False
+                diagnose("export_flush", error=exc)
+        return ok
 
     # ---- pure assembly (domain model -> span tree dict) ----
 
@@ -76,13 +82,17 @@ class GenAITurnEmitter:
             "gen_ai.agent.name": s.harness or "agent",
             "gen_ai.conversation.id": str(s.thread_id or s.session_id),
             f"{NS}.session_id": str(s.session_id),
+            "wandb.thread_id": str(s.thread_id or s.session_id),
+            "wandb.is_turn": True,
         }
         if t.input_text is not None:
             attrs["gen_ai.prompt.0.role"] = "user"
             attrs["gen_ai.prompt.0.content"] = str(t.input_text)
+            attrs["input.value"] = str(t.input_text)
         if t.output_text is not None:
             attrs["gen_ai.completion.0.role"] = "assistant"
             attrs["gen_ai.completion.0.content"] = str(t.output_text)
+            attrs["output.value"] = str(t.output_text)
         if t.incomplete:
             attrs[f"{NS}.incomplete"] = "true"   # closed by sweep, not by the harness
         # friction counters: always stamped (zeros included) so the spans query
@@ -246,13 +256,15 @@ class GenAITurnEmitter:
                 entity, _, project = project_id.partition("/")
                 key = _api_key()
                 if not key:
+                    diagnose("export_auth", project=project_id)
                     return None
                 provider = TracerProvider(resource=Resource.create(
                     {"wandb.entity": entity, "wandb.project": project}))
                 provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
                     endpoint=self._endpoint,
-                    headers={"wandb-api-key": key, "project_id": project_id})))
+                    headers={"wandb-api-key": key})))
                 self._providers[project_id] = provider
-            except Exception:
+            except Exception as exc:
+                diagnose("export_init", project=project_id, error=exc)
                 return None
         return provider.get_tracer(NS)

@@ -35,6 +35,20 @@ def test_turn_node_follows_genai_conventions():
     assert t["end"] > t["start"]                             # hook-captured timing preserved
 
 
+def test_turn_root_has_weave_conversation_contract():
+    tr, turns = run([
+        ("SessionStart", {"session_id": SID}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "add tests"}),
+        ("Stop", {"session_id": SID, "last_assistant_message": "done"}),
+        ("SessionEnd", {"session_id": SID}),
+    ])
+    attrs = turns[0][0]["attributes"]
+    assert attrs["wandb.thread_id"] == attrs["gen_ai.conversation.id"]
+    assert attrs["wandb.is_turn"] is True
+    assert attrs["input.value"] == "add tests"
+    assert attrs["output.value"] == "done"
+
+
 def test_async_subagent_after_stop_included_in_turn():
     # SubagentStart + interior tools + SubagentStop can all land AFTER the turn's
     # Stop; emission waits for finalization, so they appear inside the turn node.
