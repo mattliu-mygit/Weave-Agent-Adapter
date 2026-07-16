@@ -24,7 +24,10 @@ _PATTERNS = [
     re.compile(r"gh[posru]_[A-Za-z0-9]{20,}"),                # GitHub token
     re.compile(r"AKIA[0-9A-Z]{16}"),                          # AWS access key id
     re.compile(r"eyJ[\w\-]{8,}\.[\w\-]{8,}\.[\w\-]{8,}"),     # JWT
-    re.compile(r"-----BEGIN[A-Z ]+PRIVATE KEY-----"),         # PEM block
+    re.compile(
+        r"-----BEGIN ([A-Z ]*PRIVATE KEY)-----.*?-----END \1-----",
+        re.DOTALL,
+    ),                                                        # full PEM block
 ]
 
 

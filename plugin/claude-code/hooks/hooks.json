@@ -80,6 +80,16 @@
         ]
       }
     ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "weave-agent-adapter hook --harness claude-code --event SubagentStart"
+          }
+        ]
+      }
+    ],
     "SubagentStop": [
       {
         "hooks": [

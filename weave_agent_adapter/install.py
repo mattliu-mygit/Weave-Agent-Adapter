@@ -10,10 +10,14 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
+import shutil
+import sys
+import tempfile
 
 from .profile import load_profile
 
-MARKER = "weave-agent-adapter hook"      # identifies entries we own
+MARKERS = ("weave-agent-adapter hook", "weave_agent_adapter hook")
 
 
 def _target_path(reg: dict, user: bool) -> str:
@@ -30,20 +34,51 @@ def _read_json(path: str) -> dict:
         return {}
     try:
         with open(path) as f:
-            return json.load(f)
-    except Exception:
-        return {}
+            data = json.load(f)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{path} must contain valid JSON") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return data
 
 
 def _write_json(path: str, data: dict) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
-        f.write("\n")
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile("w", dir=directory, prefix=".hooks-",
+                                         suffix=".tmp", delete=False) as f:
+            tmp_path = f.name
+            json.dump(data, f, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, path)
+        tmp_path = None
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except FileNotFoundError:
+                pass
 
 
 def _is_ours(entry: dict) -> bool:
-    return any(MARKER in h.get("command", "") for h in entry.get("hooks", []))
+    return any(any(marker in h.get("command", "") for marker in MARKERS)
+               for h in entry.get("hooks", []))
+
+
+def _resolved_command(command: str) -> str:
+    parts = shlex.split(command)
+    if not parts or parts[0] != "weave-agent-adapter":
+        return command
+    executable = shutil.which(parts[0])
+    prefix = shlex.quote(executable) if executable else (
+        f"{shlex.quote(sys.executable)} -m weave_agent_adapter")
+    suffix = " ".join(shlex.quote(part) for part in parts[1:])
+    return f"{prefix} {suffix}" if suffix else prefix
 
 
 def _entry(command: str, ev: str) -> dict:
@@ -52,7 +87,7 @@ def _entry(command: str, ev: str) -> dict:
 
 def install(harness: str, user: bool = True, profiles_dir=None, path=None) -> str:
     reg = load_profile(harness, profiles_dir).registration
-    command, events = reg["command"], reg.get("events", [])
+    command, events = _resolved_command(reg["command"]), reg.get("events", [])
     path = path or _target_path(reg, user)
     data = _read_json(path)
     hooks = data.setdefault("hooks", {})

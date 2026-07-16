@@ -3,8 +3,12 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+
+import pytest
 
 from weave_agent_adapter.install import install, uninstall, write_plugin
+from weave_agent_adapter.profile import load_profile
 
 
 def _read(p):
@@ -81,3 +85,40 @@ def test_write_plugin_emits_manifest_and_hooks(tmp_path):
     assert manifest["name"] == "weave-agent-adapter"
     hooks = _read(os.path.join(dest, "hooks", "hooks.json"))["hooks"]
     assert "SessionStart" in hooks and "PreCompact" in hooks
+
+
+def test_install_refuses_to_overwrite_malformed_json(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text("{ broken")
+    with pytest.raises(ValueError, match="valid JSON"):
+        install("claude-code", path=str(path))
+    assert path.read_text() == "{ broken"
+
+
+def test_install_uses_resolved_console_script(tmp_path, monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda name: "/opt/bin/weave-agent-adapter")
+    path = str(tmp_path / "hooks.json")
+    install("codex", path=path)
+    command = _read(path)["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    assert command.startswith("/opt/bin/weave-agent-adapter hook --harness codex")
+
+
+def test_atomic_write_preserves_old_file_when_replace_fails(tmp_path, monkeypatch):
+    path = tmp_path / "settings.json"
+    original = '{"foreign": true}\n'
+    path.write_text(original)
+
+    def fail_replace(src, dst):
+        raise OSError("boom")
+
+    monkeypatch.setattr(os, "replace", fail_replace)
+    with pytest.raises(OSError, match="boom"):
+        install("claude-code", path=str(path))
+    assert path.read_text() == original
+    assert [p.name for p in tmp_path.iterdir()] == ["settings.json"]
+
+
+def test_checked_in_claude_plugin_events_match_profile():
+    checked_in = _read("plugin/claude-code/hooks/hooks.json")["hooks"]
+    expected = set(load_profile("claude-code").registration["events"])
+    assert set(checked_in) == expected

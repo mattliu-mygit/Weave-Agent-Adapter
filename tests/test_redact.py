@@ -37,3 +37,12 @@ def test_custom_deny_keys_extend_defaults():
     assert out["ssn"] == REDACTED
     assert out["api_key"] == REDACTED       # defaults still active
     assert out["command"] == "ls"
+
+
+def test_complete_multiline_pem_is_replaced():
+    pem = ("before\n-----BEGIN PRIVATE KEY-----\nSECRETBODY\n"
+           "-----END PRIVATE KEY-----\nafter")
+    out = Redactor().scrub(pem)
+    assert "SECRETBODY" not in out
+    assert "BEGIN PRIVATE KEY" not in out
+    assert out == "before\n[REDACTED]\nafter"
