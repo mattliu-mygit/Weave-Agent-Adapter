@@ -5,6 +5,9 @@ import json
 
 from conftest import NS, run, subagents_of, tools_of
 from weave_agent_adapter.core.model import ToolStatus
+from weave_agent_adapter.core.model import WireEvent
+from weave_agent_adapter.profile import load_profile
+from weave_agent_adapter.tracer import Tracer
 
 SID = "s1"
 
@@ -244,3 +247,65 @@ def test_redaction_applied_to_tool_input():
     args = tools_of(node, "Bash")[0]["attributes"]["gen_ai.tool.call.arguments"]
     assert "supersecret" not in args
     assert "ls" in args
+
+
+def test_failed_emitter_does_not_mark_turn_and_is_retried():
+    class Emitter:
+        accepted = False
+        calls = 0
+
+        def emit_turn(self, turn, session):
+            self.calls += 1
+            return self.accepted
+
+    emitter = Emitter()
+    tr = Tracer(load_profile("claude-code"), "ent/proj", turn_emitters=[emitter])
+    for index, (event, payload) in enumerate([
+        ("SessionStart", {"session_id": SID}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
+        ("Stop", {"session_id": SID}),
+    ]):
+        tr.handle(WireEvent(1, "claude-code", event, 1000.0 + index, payload, 1))
+    tr.finalize_idle_turns(now=1200.0, linger=10.0)
+    assert tr.sessions[SID].current_turn.emitted is False
+    assert emitter.calls == 1
+    emitter.accepted = True
+    tr.finalize_idle_turns(now=1201.0, linger=10.0)
+    assert tr.sessions[SID].current_turn.emitted is True
+    assert emitter.calls == 2
+
+
+def test_fallback_correlation_matches_tool_name_not_lifo():
+    tr, _ = run([
+        ("SessionStart", {"session_id": SID}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
+        ("PreToolUse", {"session_id": SID, "tool_name": "Read"}),
+        ("PreToolUse", {"session_id": SID, "tool_name": "Bash"}),
+        ("PostToolUse", {"session_id": SID, "tool_name": "Read", "tool_response": {}}),
+    ])
+    tools = tr.sessions[SID].current_turn.tool_calls
+    assert [tool.status for tool in tools.values()] == [ToolStatus.OK, ToolStatus.RUNNING]
+
+
+def test_ambiguous_fallback_does_not_steal_parallel_tool():
+    tr, _ = run([
+        ("SessionStart", {"session_id": SID}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
+        ("PreToolUse", {"session_id": SID, "tool_name": "Bash", "tool_input": {"command": "a"}}),
+        ("PreToolUse", {"session_id": SID, "tool_name": "Bash", "tool_input": {"command": "b"}}),
+        ("PostToolUse", {"session_id": SID, "tool_name": "Bash", "tool_response": {}}),
+    ])
+    tools = list(tr.sessions[SID].current_turn.tool_calls.values())
+    assert [tool.status for tool in tools[:2]] == [ToolStatus.RUNNING, ToolStatus.RUNNING]
+    assert tools[2].status == ToolStatus.OK
+
+
+def test_active_work_distinguishes_pending_from_emitted_turn():
+    tr, _ = run([
+        ("SessionStart", {"session_id": SID}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
+        ("Stop", {"session_id": SID}),
+    ])
+    assert tr.has_active_work() is True
+    tr.finalize_idle_turns(now=10_000.0, linger=1.0)
+    assert tr.has_active_work() is False

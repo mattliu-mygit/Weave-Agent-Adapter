@@ -169,22 +169,25 @@ class Tracer:
         # NOT emitted yet: subagents can finish after the harness's Stop, so the
         # turn stays pending until the next turn starts or the session finalizes.
 
-    def _emit_pending_turn(self, s: Session) -> None:
+    def _emit_pending_turn(self, s: Session) -> bool:
         t = s.current_turn
         if not t or t.open or t.emitted:
-            return
-        t.emitted = True
+            return bool(t and t.emitted)
         self._thread_of(s)                    # resolve the conversation id once
         if self.enricher:
             try:
                 self.enricher.enrich_turn(t, s)   # LLM-call internals from the transcript
             except Exception:
                 pass
+        accepted = True
         for e in self.turn_emitters:
             try:
-                e.emit_turn(t, s)
+                if e.emit_turn(t, s) is False:
+                    accepted = False
             except Exception:
-                pass                          # an emitter must never break the reducer
+                accepted = False              # an emitter must never break the reducer
+        t.emitted = accepted
+        return accepted
 
     def finalize_idle_turns(self, now: float, linger: float) -> int:
         """Emit closed-but-pending turns whose session has been quiet for
@@ -194,10 +197,24 @@ class Tracer:
         n = 0
         for s in self.sessions.values():
             t = s.current_turn
-            if t and not t.open and not t.emitted and now - s.last_activity > linger:
+            if (t and not t.open and not t.emitted
+                    and not self._turn_has_open_children(t)
+                    and now - s.last_activity > linger):
                 self._emit_pending_turn(s)
                 n += 1
         return n
+
+    @staticmethod
+    def _turn_has_open_children(t: Turn) -> bool:
+        return (any(tc.status == ToolStatus.RUNNING for tc in t.tool_calls.values())
+                or any(rec.get("open") for rec in t.subagents.values()))
+
+    def has_active_work(self) -> bool:
+        for s in self.sessions.values():
+            t = s.current_turn
+            if t and (t.open or not t.emitted or self._turn_has_open_children(t)):
+                return True
+        return False
 
     def _thread_of(self, s: Session):
         # The conversation id links forks/resumes. How to get it is per-harness,
@@ -340,9 +357,17 @@ class Tracer:
             return s, None
         t = s.current_turn
         key = f.get("tool_use_id")
-        if key and key in t.tool_calls:
-            return s, t.tool_calls[key]
-        for k in reversed(t.tool_order):          # fallback: last still-running tool
-            if t.tool_calls[k].status == ToolStatus.RUNNING:
-                return s, t.tool_calls[k]
+        if key:
+            return s, t.tool_calls.get(key)
+        candidates = [t.tool_calls[k] for k in t.tool_order
+                      if t.tool_calls[k].status == ToolStatus.RUNNING]
+        name = f.get("tool_name")
+        if name:
+            candidates = [tc for tc in candidates if tc.tool_name == name]
+        supplied_input = f.get("tool_input")
+        if supplied_input:
+            scrubbed = self.redactor.scrub(supplied_input)
+            candidates = [tc for tc in candidates if tc.tool_input == scrubbed]
+        if len(candidates) == 1:
+            return s, candidates[0]
         return s, None

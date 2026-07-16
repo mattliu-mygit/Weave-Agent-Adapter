@@ -56,9 +56,10 @@ class GenAITurnEmitter:
         self._emit = emit                         # injectable for tests
         self._providers: dict = {}                # project_id -> TracerProvider
 
-    def emit_turn(self, turn: Turn, session: Session) -> None:
+    def emit_turn(self, turn: Turn, session: Session) -> bool:
         node = self._build_turn(turn, session)
-        (self._emit or self._emit_otel)(node, self._project_id(session))
+        result = (self._emit or self._emit_otel)(node, self._project_id(session))
+        return result is not False
 
     def flush(self) -> None:
         for p in self._providers.values():
@@ -111,10 +112,13 @@ class GenAITurnEmitter:
                     "attributes": {f"{NS}.compaction.trigger": str(trigger)}}
                    for at, trigger in t.compactions]
 
+        end = t.ended_at if t.ended_at is not None else t.started_at
+        if children:
+            end = max(end, *(child["end"] for child in children))
         return {
             "name": f"invoke_agent {s.harness or 'agent'}",
             "start": t.started_at,
-            "end": t.ended_at if t.ended_at is not None else t.started_at,
+            "end": end,
             "attributes": attrs,
             "events": events,
             "children": children,
@@ -148,8 +152,9 @@ class GenAITurnEmitter:
              "gen_ai.tool.name": tc.tool_name,
              "gen_ai.tool.call.id": tc.correlation_key,
              "gen_ai.tool.call.arguments": json.dumps(tc.tool_input, default=str)}
-        if tc.output is not None:
-            result = json.dumps(tc.output, default=str)
+        result_value = tc.output if tc.output is not None else tc.error
+        if result_value is not None:
+            result = json.dumps(result_value, default=str)
             if len(result) > _MAX_TOOL_OUTPUT:
                 result = result[:_MAX_TOOL_OUTPUT] + "…[truncated]"
             a["gen_ai.tool.call.result"] = result
@@ -205,10 +210,10 @@ class GenAITurnEmitter:
                 pass
         return self._default_entity if self._default_entity is not _UNSET else ""
 
-    def _emit_otel(self, node: dict, project_id: str) -> None:
+    def _emit_otel(self, node: dict, project_id: str) -> bool:
         tracer = self._tracer(project_id)
         if tracer is None:
-            return
+            return False
         from opentelemetry.trace import Status, StatusCode, set_span_in_context
 
         def ns(ts: float) -> int:
@@ -227,6 +232,7 @@ class GenAITurnEmitter:
             span.end(end_time=ns(n["end"]))
 
         walk(node, None)
+        return True
 
     def _tracer(self, project_id: str):
         provider = self._providers.get(project_id)

@@ -59,6 +59,8 @@ def test_async_subagent_after_stop_included_in_turn():
     assert tools_of(sub, "Read")                             # interior tool nested inside
     assert sub["attributes"]["gen_ai.completion.0.content"] == "found it"
     assert sub["end"] > sub["start"]
+    assert t["end"] >= sub["end"]
+    assert t["end"] >= max(child["end"] for child in t["children"])
 
 
 def test_one_trace_per_turn_shared_conversation():
@@ -107,6 +109,21 @@ def test_large_tool_output_is_truncated():
     result = tools_of(t, "Read")[0]["attributes"]["gen_ai.tool.call.result"]
     assert len(result) < 40_000
     assert result.endswith("…[truncated]")
+
+
+def test_failed_tool_emits_redacted_error_result():
+    tr, turns = run([
+        ("SessionStart", {"session_id": SID}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
+        ("PreToolUse", {"session_id": SID, "tool_name": "Bash", "tool_use_id": "t1"}),
+        ("PostToolUseFailure", {"session_id": SID, "tool_use_id": "t1",
+                                "tool_response": "failed with sk-ABCDEFGHIJKLMNOP1234"}),
+        ("Stop", {"session_id": SID}),
+        ("SessionEnd", {"session_id": SID}),
+    ])
+    result = tools_of(turns[0][0], "Bash")[0]["attributes"]["gen_ai.tool.call.result"]
+    assert "failed with" in result
+    assert "sk-ABCDEFGHIJKLMNOP1234" not in result
 
 
 def test_bare_project_without_entity_stays_bare():
