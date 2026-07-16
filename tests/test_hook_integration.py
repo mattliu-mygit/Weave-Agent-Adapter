@@ -46,12 +46,12 @@ def test_every_registered_hook_reaches_sidecar(harness, tmp_path):
     sidecar._handle_line = recording_handle
     thread = threading.Thread(target=sidecar.serve)
     thread.start()
-    _wait_for_socket(socket_path)
-    profile = load_profile(harness)
-    events = profile.registration["events"]
-    env = os.environ.copy()
-    env["WEAVE_AGENT_ADAPTER_SOCKET"] = str(socket_path)
     try:
+        _wait_for_socket(socket_path)
+        profile = load_profile(harness)
+        events = profile.registration["events"]
+        env = os.environ.copy()
+        env["WEAVE_AGENT_ADAPTER_SOCKET"] = str(socket_path)
         for event in events:
             payload = {
                 "session_id": f"integration-{harness}",
