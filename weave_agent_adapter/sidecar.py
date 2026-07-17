@@ -15,7 +15,7 @@ import socket
 import threading
 import time
 
-from .model import SUPPORTED_WIRE_VERSION, WireEvent
+from .model import DEFAULT_TRACE_ROLE, SUPPORTED_WIRE_VERSION, WireEvent, normalize_trace_role
 from .diagnostics import diagnose
 from .profile import load_profile
 from .tracer import Tracer
@@ -73,6 +73,7 @@ class Sidecar:
             wire = WireEvent(
                 harness=d["harness"], event=d["event"],
                 captured_at=captured_at, payload=payload,
+                trace_role=normalize_trace_role(d.get("trace_role", DEFAULT_TRACE_ROLE)),
             )
         except Exception as exc:
             diagnose("wire_parse", error=exc)

@@ -46,6 +46,26 @@ def test_sidecar_rejects_non_finite_timestamp(tmp_path, monkeypatch):
     assert handled == []
 
 
+def test_sidecar_parses_trace_role_with_backward_compatible_default(tmp_path, monkeypatch):
+    sidecar = Sidecar("ent/proj", str(tmp_path / "sidecar.sock"))
+    handled = []
+    monkeypatch.setattr(
+        sidecar,
+        "_tracer_for",
+        lambda _harness: SimpleNamespace(handle=handled.append),
+    )
+
+    sidecar._handle_line(_wire(trace_role="signal_evaluation"))
+    sidecar._handle_line(_wire())
+    sidecar._handle_line(_wire(trace_role="future_role"))
+
+    assert [wire.trace_role for wire in handled] == [
+        "signal_evaluation",
+        "agent_session",
+        "other_system",
+    ]
+
+
 def test_idle_timeout_does_not_exit_with_active_work(tmp_path):
     sidecar = Sidecar("ent/proj", str(tmp_path / "sidecar.sock"), idle_s=1.0)
     sidecar._last = 1.0

@@ -33,6 +33,45 @@ def test_turn_finalized_on_session_end():
     assert not tr.sessions                        # popped on session_end
 
 
+def test_session_retains_launch_trace_role():
+    _, turns = run(
+        [
+            ("SessionStart", {"session_id": SID}),
+            ("UserPromptSubmit", {"session_id": SID, "prompt": "judge"}),
+            ("Stop", {"session_id": SID}),
+            ("SessionEnd", {"session_id": SID}),
+        ],
+        trace_role="judge_evaluation",
+    )
+
+    (_, session), = turns
+    assert session.trace_role == "judge_evaluation"
+
+
+def test_conflicting_roles_on_one_session_fail_safe_to_other_system():
+    tr = Tracer(load_profile("claude-code"), "ent/proj")
+    tr.handle(
+        WireEvent(
+            "claude-code",
+            "SessionStart",
+            1.0,
+            {"session_id": SID},
+            trace_role="agent_session",
+        )
+    )
+    tr.handle(
+        WireEvent(
+            "claude-code",
+            "UserPromptSubmit",
+            2.0,
+            {"session_id": SID, "prompt": "judge"},
+            trace_role="judge_evaluation",
+        )
+    )
+
+    assert tr.sessions[SID].trace_role == "other_system"
+
+
 def test_tool_correlation_by_use_id():
     # two tools open concurrently -> the close must match by tool_use_id
     tr, turns = run([

@@ -92,6 +92,28 @@ def test_captured_at_is_hook_entry_time_not_post_read_time(monkeypatch):
     assert sent[0]["captured_at"] == 10.0
 
 
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        (None, "agent_session"),
+        ("judge_evaluation", "judge_evaluation"),
+        ("future_role", "other_system"),
+    ],
+)
+def test_hook_forwards_validated_trace_role(monkeypatch, configured, expected):
+    sent = []
+    monkeypatch.setattr(cli, "_read_stdin", lambda **_kwargs: '{"session_id":"s"}')
+    monkeypatch.setattr(cli.transport, "send", lambda event: sent.append(event) or True)
+    if configured is None:
+        monkeypatch.delenv("WEAVE_AGENT_TRACE_ROLE", raising=False)
+    else:
+        monkeypatch.setenv("WEAVE_AGENT_TRACE_ROLE", configured)
+
+    assert cli.cmd_hook(argparse.Namespace(harness="codex", event="SessionStart")) == 0
+
+    assert sent[0]["trace_role"] == expected
+
+
 def test_ensure_sidecar_has_one_short_deadline(monkeypatch):
     monkeypatch.setattr(cli, "_sidecar_up", lambda: False)
     monkeypatch.setattr(cli.subprocess, "Popen", lambda *args, **kwargs: object())

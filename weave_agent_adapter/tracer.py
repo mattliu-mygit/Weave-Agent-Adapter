@@ -24,7 +24,15 @@ import json
 from .config import resolve_project
 from .config_surface import config_version
 from .model import (
-    Decision, Permission, Session, Steering, SteeringKind, ToolCall, ToolStatus, Turn,
+    OTHER_TRACE_ROLE,
+    Decision,
+    Permission,
+    Session,
+    Steering,
+    SteeringKind,
+    ToolCall,
+    ToolStatus,
+    Turn,
 )
 from .enrich import make_enricher
 from .profile import Profile
@@ -61,6 +69,7 @@ class Tracer:
         if canonical is None:
             return  # unmapped native event, ignore
         fields = self.profile.extract(wire.payload, wire.event)
+        fields["trace_role"] = wire.trace_role
         sid = fields.get("session_id")
         if not sid:
             return
@@ -79,6 +88,8 @@ class Tracer:
             handler(sid, fields, wire.captured_at)
         s = self.sessions.get(sid)
         if s:
+            if s.trace_role != wire.trace_role:
+                s.trace_role = OTHER_TRACE_ROLE
             if s.current_turn:
                 for name in ("model", "permission_mode", "turn_id"):
                     if fields.get(name) is not None:
@@ -96,6 +107,7 @@ class Tracer:
         s = Session(
             session_id=sid, project=self._project_for(cwd), last_activity=at,
             harness=self.profile.name, transcript=f.get("transcript"), cwd=cwd,
+            trace_role=f["trace_role"],
         )
         if self.profile.thread.get("source") == "field":
             s.thread_id = f.get(self.profile.thread.get("id_field"))

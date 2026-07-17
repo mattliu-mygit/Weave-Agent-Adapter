@@ -91,6 +91,18 @@ def test_builds_public_conversation_sdk_objects():
     assert payload["attributes"]["weave_agent_adapter.compaction_count"] == 1
     assert payload["attributes"]["weave_agent_adapter.compaction_triggers"] == ["auto"]
     assert payload["attributes"]["weave_agent_adapter.cwd"] == "/repo"
+    assert payload["attributes"]["weave_agent_signals.trace_role"] == "agent_session"
+
+
+def test_emits_explicit_non_agent_trace_role_on_root():
+    session = _session()
+    session.trace_role = "reflection_evaluation"
+
+    payload = WeaveTurnEmitter(weave_module=weave)._build_turn(_turn(), session)
+
+    assert payload["attributes"]["weave_agent_signals.trace_role"] == (
+        "reflection_evaluation"
+    )
 
 
 def test_final_response_is_an_llm_output_not_a_turn_input():

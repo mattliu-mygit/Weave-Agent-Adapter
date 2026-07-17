@@ -20,6 +20,7 @@ import time
 
 from . import transport
 from .diagnostics import diagnose, open_diagnostic_stream
+from .model import DEFAULT_TRACE_ROLE, TRACE_ROLE_ENV, normalize_trace_role
 
 
 def _read_stdin(timeout: float = 0.5, max_bytes: int = 1_048_576) -> str:
@@ -142,6 +143,9 @@ def cmd_hook(args) -> int:
         event = {
             "v": 1, "harness": args.harness, "event": args.event,
             "captured_at": captured_at, "payload": payload,
+            "trace_role": normalize_trace_role(
+                os.environ.get(TRACE_ROLE_ENV, DEFAULT_TRACE_ROLE)
+            ),
         }
         if not transport.send(event):
             if _ensure_sidecar():

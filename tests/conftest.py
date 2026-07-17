@@ -18,14 +18,14 @@ class CapturingEmitter:
 
 
 def run(events, harness="claude-code", session_rate=1.0, redactor=None, t0=1000.0,
-        project="ent/proj", project_per_repo=False):
+        project="ent/proj", project_per_repo=False, trace_role="agent_session"):
     """Feed native events through a tracer and collect finalized domain turns."""
     finalized = []
     tr = Tracer(load_profile(harness), project, emitter=CapturingEmitter(finalized),
                 redactor=redactor, session_rate=session_rate,
                 project_per_repo=project_per_repo)
     for i, (name, payload) in enumerate(events):
-        tr.handle(WireEvent(harness, name, t0 + i, payload))
+        tr.handle(WireEvent(harness, name, t0 + i, payload, trace_role=trace_role))
     return tr, finalized
 
 

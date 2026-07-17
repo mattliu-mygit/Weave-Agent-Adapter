@@ -6,6 +6,23 @@ from enum import Enum
 from typing import Optional
 
 SUPPORTED_WIRE_VERSION = 1
+TRACE_ROLE_ATTRIBUTE = "weave_agent_signals.trace_role"
+TRACE_ROLE_ENV = "WEAVE_AGENT_TRACE_ROLE"
+DEFAULT_TRACE_ROLE = "agent_session"
+OTHER_TRACE_ROLE = "other_system"
+TRACE_ROLES = frozenset(
+    {
+        DEFAULT_TRACE_ROLE,
+        "signal_evaluation",
+        "judge_evaluation",
+        "reflection_evaluation",
+        OTHER_TRACE_ROLE,
+    }
+)
+
+
+def normalize_trace_role(value: object) -> str:
+    return value if isinstance(value, str) and value in TRACE_ROLES else OTHER_TRACE_ROLE
 
 
 class ToolStatus(str, Enum):
@@ -31,6 +48,7 @@ class WireEvent:
     event: str
     captured_at: float
     payload: dict
+    trace_role: str = DEFAULT_TRACE_ROLE
 
 
 @dataclass
@@ -90,3 +108,4 @@ class Session:
     thread_id: Optional[str] = None
     config_version: Optional[str] = None
     current_turn: Optional[Turn] = None
+    trace_role: str = DEFAULT_TRACE_ROLE

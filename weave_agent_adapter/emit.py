@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from . import __version__
 from .diagnostics import diagnose
-from .model import Session, ToolStatus, Turn
+from .model import TRACE_ROLE_ATTRIBUTE, Session, ToolStatus, Turn
 
 NS = "weave_agent_adapter"
 _MAX_TOOL_OUTPUT = 32_000
@@ -163,6 +163,7 @@ class WeaveTurnEmitter:
                 call.status == ToolStatus.ERROR for call in turn.tool_calls.values()
             ),
             f"{NS}.compaction_count": len(turn.compactions),
+            TRACE_ROLE_ATTRIBUTE: session.trace_role,
         }
         if session.cwd:
             attributes[f"{NS}.cwd"] = str(session.cwd)
