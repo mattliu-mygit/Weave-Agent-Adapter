@@ -71,7 +71,7 @@ def test_turns_share_conversation_and_keep_filterable_counters():
         ("UserPromptSubmit", {"session_id": SID, "prompt": "one"}),
         ("PreToolUse", {"session_id": SID, "tool_name": "Bash", "tool_use_id": "t1"}),
         ("PermissionDenied", {"session_id": SID, "tool_use_id": "t1",
-                              "denial_reason": "no"}),
+                              "reason": "no"}),
         ("UserPromptSubmit", {"session_id": SID, "prompt": "try this instead"}),
         ("Stop", {"session_id": SID}),
         ("UserPromptSubmit", {"session_id": SID, "prompt": "two"}),

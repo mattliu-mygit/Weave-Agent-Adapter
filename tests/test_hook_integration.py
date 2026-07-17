@@ -31,7 +31,7 @@ def _wait_for_socket(path: Path) -> None:
     raise AssertionError(f"sidecar socket did not start: {path}")
 
 
-@pytest.mark.parametrize("harness", ["codex", "claude-code"])
+@pytest.mark.parametrize("harness", ["codex", "claude-code", "gemini-cli"])
 def test_every_registered_hook_reaches_sidecar(harness, tmp_path):
     repo_root = Path(__file__).resolve().parents[1]
     socket_path = repo_root / f".t-{os.getpid()}-{uuid.uuid4().hex[:6]}.sock"
@@ -64,14 +64,19 @@ def test_every_registered_hook_reaches_sidecar(harness, tmp_path):
                 "last_assistant_message": "integration reply",
             }
             started = time.monotonic()
+            command = [sys.executable, "-m", "weave_agent_adapter", "hook",
+                       "--harness", harness]
+            if "--success-json" in profile.registration["command"]:
+                command.append("--success-json")
+            command.extend(["--event", event])
             result = subprocess.run(
-                [sys.executable, "-m", "weave_agent_adapter", "hook",
-                 "--harness", harness, "--event", event],
+                command,
                 input=json.dumps(payload), text=True, cwd=repo_root, env=env,
                 capture_output=True, timeout=2.0,
             )
             assert result.returncode == 0
-            assert result.stdout == ""
+            expected_stdout = "{}\n" if harness == "gemini-cli" else ""
+            assert result.stdout == expected_stdout
             assert time.monotonic() - started < 1.0
         deadline = time.monotonic() + 1.0
         while len(seen) < len(events) and time.monotonic() < deadline:

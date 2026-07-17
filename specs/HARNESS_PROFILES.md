@@ -15,15 +15,16 @@ Other delivery mechanisms are outside the current product.
 Profiles may map native events to these actions:
 
 - `session_start`, `session_end`
-- `turn_start`, `turn_end`
+- `turn_start`, `turn_update`, `turn_end`
 - `tool_pre`, `tool_post`, `tool_error`
 - `permission_request`, `permission_denied`
 - `subagent_start`, `subagent_stop`
 - `compaction`
 
-Missing actions degrade by omission. A missing session end is handled by the
-session TTL; a missing tool pre-event produces a completion-only tool record;
-a missing subagent start can be materialized from its first interior tool.
+`turn_update` applies observed metadata without changing the lifecycle. Missing
+actions degrade by omission. A missing session end is handled by the session
+TTL; a missing tool pre-event produces a completion-only tool record; a missing
+subagent start can be materialized from its first interior tool.
 
 ## Profile shape
 
@@ -52,6 +53,12 @@ model              = "model"
 permission_mode    = "permission_mode"
 turn_id            = "turn_id"
 
+[event_fields.PostToolUseFailure]
+tool_error = "error"
+
+[event_fields.Stop]
+pending_work = "background_tasks"
+
 [enrich]
 source = "native-transcript-v1"
 
@@ -63,10 +70,19 @@ events     = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "
 ```
 
 Field values are dotted paths into the native payload. Optional fields are
-simply omitted when unavailable. Canonical fields currently used by the
-reducer or enrichment path include session, prompt/reply, tool, permission,
-subagent, transcript, compaction, working-directory, model, permission-mode,
-turn-ID, and effort data.
+simply omitted when unavailable. `[event_fields.<NativeEvent>]` mappings add to
+or override `[fields]` for one native event; they select paths only and cannot
+run conditions, transforms, defaults, or code. Canonical fields currently used
+by the reducer or enrichment path include session, prompt/reply, tool output or
+error, permission, subagent identity, transcript, compaction, pending work,
+working-directory, model, permission-mode, turn-ID, and effort data.
+
+Capabilities are optional and additive. Profiles may omit session end,
+explicit tool failure, permissions, subagents, compaction, model metadata,
+transcript enrichment, configuration fingerprinting, or pending-work signals.
+Missing capabilities must not prevent the remaining observed turn from being
+emitted. A truthy `pending_work` on `turn_end` keeps the turn open; a later
+clean `turn_end` closes it, with TTL finalization as fallback.
 
 Optional `[thread]`, `[enrich]`, and `[config_surface]` sections select shipped
 interpretation strategies. Unknown strategy names degrade to no enrichment;
@@ -82,9 +98,13 @@ the installed console script, and atomically merges one command per event into
 the harness's JSON settings. Foreign settings and hooks are preserved.
 `uninstall` removes only adapter commands.
 
-Both shipped harnesses use the standard `{"hooks": {event: [...]}}` settings
+The shipped harnesses use the standard `{"hooks": {event: [...]}}` settings
 shape. A future harness with a different settings format would require an
 explicit product decision rather than an unused profile selector.
+
+The registration command may include `--success-json` when a harness requires
+a successful hook to print `{}`. This behavior is opt-in and does not require
+the hook path to load a profile or branch on a harness name.
 
 A profile may declare a `post_install` note for a required activation step,
 such as reviewing a newly registered hook in the harness trust UI. The CLI

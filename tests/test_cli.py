@@ -56,6 +56,26 @@ def test_malformed_payload_is_not_forwarded(monkeypatch):
     assert sent == []
 
 
+def test_success_json_flag_prints_empty_object_even_for_malformed_input(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_read_stdin", lambda **kwargs: "{ broken")
+    args = argparse.Namespace(
+        harness="gemini-cli", event="SessionStart", success_json=True)
+
+    assert cli.cmd_hook(args) == 0
+    assert capsys.readouterr().out == "{}\n"
+
+
+def test_hook_parser_keeps_success_json_opt_in(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_read_stdin", lambda **kwargs: '{}')
+    monkeypatch.setattr(cli.transport, "send", lambda event: True)
+
+    assert cli.main([
+        "hook", "--harness", "gemini-cli", "--success-json",
+        "--event", "SessionStart",
+    ]) == 0
+    assert capsys.readouterr().out == "{}\n"
+
+
 def test_captured_at_is_hook_entry_time_not_post_read_time(monkeypatch):
     sent = []
     times = iter([10.0, 99.0])

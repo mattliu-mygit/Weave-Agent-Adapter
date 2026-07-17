@@ -12,9 +12,9 @@ Tracing is passive. It never approves, rejects, rewrites, or delays an agent
 action beyond a short bounded local handoff. Hook, sidecar, enrichment, and
 export failures never fail the harness.
 
-Claude Code and Codex ship as declarative profiles. Another harness can use the
-same implementation when it runs a command for lifecycle events and passes one
-JSON object on standard input.
+Claude Code, Codex, and Gemini CLI ship as declarative profiles. Another
+harness can use the same implementation when it runs a command for lifecycle
+events and passes one JSON object on standard input.
 
 ## Architecture
 
@@ -29,18 +29,21 @@ harness command hook
 ```
 
 The hook path is standard-library-only. It stamps the entry time, reads one
-size- and time-bounded JSON object, sends a versioned envelope, and exits zero
-with empty stdout. A missing sidecar is started once and retried within the
-same short deadline. No hook performs network I/O or writes raw payloads.
+size- and time-bounded JSON object, sends a versioned envelope, and exits zero.
+Stdout is empty by default; a generic command flag emits an empty JSON object
+for harnesses that require a JSON acknowledgment. A missing sidecar is started
+once and retried within the same short deadline. No hook performs network I/O
+or writes raw payloads.
 
 The sidecar owns every dependency-bearing operation: profile loading, field
 extraction, redaction, transcript enrichment, state reduction, project
 routing, and export. One sidecar multiplexes harnesses and sessions while
 keeping their reducer state isolated.
 
-Profiles map native events and payload fields to a fixed canonical vocabulary.
-The reducer contains no Claude Code or Codex event names. Harnesses that omit
-an event degrade by omission rather than requiring alternate reducer paths.
+Profiles map native events and common or event-specific payload fields to a
+fixed canonical vocabulary. The reducer contains no harness names or native
+event names. Harnesses that omit an event or field lose only that detail rather
+than requiring alternate reducer paths or rejecting the remaining trace.
 
 ## State and lifecycle
 
@@ -50,12 +53,13 @@ unambiguous running tool with a compatible name and input. Subagents correlate
 strictly by agent ID.
 
 A harness turn-end event is the authoritative normal boundary. It closes and
-hands the turn to the emitter immediately, then removes it from reducer state
-regardless of SDK acceptance. Events observed after that boundary are not
-attached retroactively. Session TTL and shutdown finalize only a current turn
-whose normal end event was never observed. Weave owns agent-span routing,
-asynchronous export, batching, and network retry; the reducer has no partial
-retry queue.
+hands the turn to the emitter immediately unless its profile maps a truthy
+pending-work field. Pending work leaves the turn mutable until a later clean
+turn end; the session TTL remains crash safety if that event never arrives.
+After emission, the turn is removed from reducer state regardless of SDK
+acceptance, and later events are not attached retroactively. Weave owns
+agent-span routing, asynchronous export, batching, and network retry; the
+reducer has no partial retry queue.
 
 The sidecar exits after its idle deadline only when no mutable turn remains.
 Shutdown finalizes current sessions and requests a bounded exporter flush.
@@ -80,6 +84,9 @@ values or exception messages. Runtime files are user-only.
 - Optional named enrichers may understand a native transcript format; the
   reducer and emitter never branch on a harness name. Enrichment is
   best-effort because those formats are not part of this adapter's contract.
+- Capabilities are additive: session end, explicit failures, permissions,
+  subagents, compaction, model metadata, enrichment, configuration surfaces,
+  and pending-work signals are all optional.
 - Reduction and Weave mapping remain separate so lifecycle behavior is tested
   independently from SDK objects.
 - `weave.log_turn` is the only production tracing plane.

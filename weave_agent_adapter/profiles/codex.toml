@@ -40,7 +40,6 @@ assistant_message  = "last_assistant_message"   # Stop (the turn's final reply)
 transcript         = "transcript_path"
 agent_id           = "agent_id"
 agent_type         = "agent_type"
-agent_output       = "last_assistant_message"   # SubagentStop
 compaction_trigger = "trigger"              # PreCompact (provisional)
 
 [enrich]

@@ -40,7 +40,8 @@ def test_codex_traces_with_only_a_profile():
     assert tools_of(turn, "Bash")
     (sub,) = subagents_of(turn, "reviewer")
     assert sub["agent_id"] == "ag1"
-    assert sub["output"] == "looks good"
+    assert sub["started_at"] < sub["ended_at"]
+    assert "output" not in sub
 
 
 def test_codex_install_targets_codex_hooks_json(tmp_path):

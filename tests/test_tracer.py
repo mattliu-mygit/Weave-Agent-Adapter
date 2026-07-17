@@ -6,7 +6,7 @@ import json
 from conftest import run, subagents_of, tools_of
 from weave_agent_adapter.model import ToolStatus
 from weave_agent_adapter.model import WireEvent
-from weave_agent_adapter.profile import load_profile
+from weave_agent_adapter.profile import Profile, load_profile
 from weave_agent_adapter.tracer import Tracer
 
 SID = "s1"
@@ -48,6 +48,31 @@ def test_tool_correlation_by_use_id():
     assert t.tool_calls["b"].status == ToolStatus.RUNNING
 
 
+def test_claude_failure_and_denial_use_documented_event_fields():
+    _, turns = run([
+        ("SessionStart", {"session_id": SID}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p",
+                              "model": "claude-sonnet", "permission_mode": "default"}),
+        ("PreToolUse", {"session_id": SID, "tool_name": "Bash", "tool_use_id": "failed"}),
+        ("PostToolUseFailure", {"session_id": SID, "tool_name": "Bash",
+                                "tool_use_id": "failed", "error": "exit 1"}),
+        ("PreToolUse", {"session_id": SID, "tool_name": "Write", "tool_use_id": "denied"}),
+        ("PermissionRequest", {"session_id": SID, "tool_use_id": "denied"}),
+        ("PermissionDenied", {"session_id": SID, "tool_use_id": "denied",
+                              "reason": "policy"}),
+        ("Stop", {"session_id": SID}),
+    ])
+
+    (turn, _), = turns
+    assert turn.model == "claude-sonnet"
+    assert turn.permission_mode == "default"
+    failed, denied = tools_of(turn)
+    assert failed.status == ToolStatus.ERROR
+    assert failed.error == "exit 1"
+    assert denied.status == ToolStatus.REJECTED
+    assert denied.permission.reason == "policy"
+
+
 def test_midturn_prompt_is_steering_not_new_turn():
     tr, turns = run([
         ("SessionStart", {"session_id": SID}),
@@ -72,7 +97,8 @@ def test_stop_only_subagent_gets_identity_no_output():
     (turn, _), = turns
     (sub,) = subagents_of(turn, "Explore")
     assert sub["agent_id"] == "a9"
-    assert sub["output"] is None
+    assert sub["started_at"] == sub["ended_at"]
+    assert "output" not in sub
 
 
 def test_background_subagent_stop_is_ignored():
@@ -114,7 +140,8 @@ def test_background_stop_does_not_steal_real_subagent():
     (sub,) = subagents_of(turn)                   # exactly one subagent record
     assert len([tool for tool in tools_of(turn, "Bash")
                 if tool.agent_id == sub["agent_id"]]) == 2
-    assert sub["output"] == "done"
+    assert sub["ended_at"] == 1008.0
+    assert "output" not in sub
 
 
 def test_compaction_recorded_as_turn_event():
@@ -308,3 +335,71 @@ def test_stop_immediately_emits_and_clears_active_work():
     assert turn.output_text == "done"
     assert turn.turn_id == "turn-1"
     assert tr.has_active_work() is False
+
+
+def test_event_specific_fields_update_turn_and_mark_embedded_tool_error():
+    profile = Profile.from_dict({
+        "harness": {"name": "minimal"},
+        "events": {
+            "Begin": "turn_start",
+            "Model": "turn_update",
+            "ToolDone": "tool_post",
+            "Done": "turn_end",
+        },
+        "fields": {
+            "session_id": "session_id",
+            "prompt": "prompt",
+            "tool_name": "tool_name",
+            "tool_input": "tool_input",
+            "assistant_message": "response",
+        },
+        "event_fields": {
+            "Model": {"model": "request.model"},
+            "ToolDone": {"tool_error": "tool_response.error"},
+        },
+    })
+    finalized = []
+
+    class Emitter:
+        def emit_turn(self, turn, session):
+            finalized.append((turn, session))
+
+    tr = Tracer(profile, "ent/proj", emitter=Emitter())
+    for index, (event, payload) in enumerate([
+        ("Begin", {"session_id": SID, "prompt": "fix it"}),
+        ("Model", {"session_id": SID, "request": {"model": "model-1"}}),
+        ("ToolDone", {"session_id": SID, "tool_name": "Shell",
+                      "tool_input": {"command": "false"},
+                      "tool_response": {"error": "exit 1"}}),
+        ("Done", {"session_id": SID, "response": "handled"}),
+    ]):
+        tr.handle(WireEvent("minimal", event, 2000.0 + index, payload))
+
+    (turn, _), = finalized
+    assert turn.model == "model-1"
+    (tool,) = tools_of(turn, "Shell")
+    assert tool.status == ToolStatus.ERROR
+    assert tool.error == "exit 1"
+    assert tool.output is None
+
+
+def test_pending_work_defers_turn_completion_until_clean_end():
+    tr, turns = run([
+        ("SessionStart", {"session_id": SID}),
+        ("UserPromptSubmit", {"session_id": SID, "prompt": "p"}),
+        ("Stop", {"session_id": SID, "last_assistant_message": "still working",
+                  "background_tasks": [{"id": "task-1"}]}),
+    ])
+
+    assert turns == []
+    assert tr.sessions[SID].current_turn.ended_at is None
+
+    tr.handle(WireEvent("claude-code", "Stop", 1100.0, {
+        "session_id": SID,
+        "last_assistant_message": "done",
+        "background_tasks": [],
+    }))
+
+    (turn, _), = turns
+    assert turn.output_text == "done"
+    assert turn.ended_at == 1100.0

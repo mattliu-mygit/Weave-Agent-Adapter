@@ -6,9 +6,9 @@ spans for model calls, tools, subagents, approvals, rejections, and mid-turn
 steering. These spans can be viewed in Agents and used for Signals.
 
 It attaches through external command hooks: no harness source changes, no
-in-process SDK, and no synchronous network work on the hook path. Claude Code
-and Codex profiles ship with the package; another JSON-on-stdin command-hook
-harness can be added with one TOML profile.
+in-process SDK, and no synchronous network work on the hook path. Claude Code,
+Codex, and Gemini CLI profiles ship with the package; another JSON-on-stdin
+command-hook harness can be added with one TOML profile.
 
 ## Span shape
 
@@ -53,17 +53,25 @@ Register the hooks:
 ```bash
 weave-agent-adapter install                       # Claude Code
 weave-agent-adapter install --harness codex       # Codex
+weave-agent-adapter install --harness gemini-cli  # Gemini CLI
 ```
 
 Codex skips new or changed non-managed hooks until you review and trust their
 exact definitions. After installing Codex hooks, open `/hooks` in Codex and
 trust the adapter entries.
 
+Gemini CLI captures sessions, turns, model selection, tools, final responses,
+and compaction through its stable non-streaming hooks. Permissions, subagents,
+transcript enrichment, and configuration fingerprinting are omitted because
+that profile has no reliable source for them; the rest of the trace still
+emits normally. Claude Code's `PermissionDenied` hook covers auto-mode
+classifier denials, not denials made in the manual permission dialog.
+
 The command atomically merges adapter entries into the harness settings and
 preserves existing configuration. Remove only the adapter entries with:
 
 ```bash
-weave-agent-adapter uninstall [--harness codex]
+weave-agent-adapter uninstall [--harness codex|gemini-cli]
 ```
 
 Use `--local` for repository-scoped hook settings.
@@ -71,10 +79,11 @@ Use `--local` for repository-scoped hook settings.
 ## Runtime
 
 Hooks perform a size- and time-bounded send to a user-only Unix socket and
-always exit zero without making permission decisions. The first event starts a
-singleton sidecar, which normalizes events, redacts values, builds the turn,
-and maps it to public Weave Conversation SDK objects. It exits when idle and
-restarts on demand.
+always exit zero without making permission decisions. They use empty stdout by
+default and may return an empty JSON object when the harness requires a JSON
+acknowledgment. The first event starts a singleton sidecar, which normalizes
+events, redacts values, builds the turn, and maps it to public Weave
+Conversation SDK objects. It exits when idle and restarts on demand.
 
 A turn-end hook hands the completed turn to the emitter immediately and only
 once. The Weave SDK owns agent-span routing, asynchronous export, batching, and
@@ -119,15 +128,16 @@ forwarding.
 
 ## Add a harness
 
-Copy [claude-code.toml](weave_agent_adapter/profiles/claude-code.toml) or
-[codex.toml](weave_agent_adapter/profiles/codex.toml), then declare:
+Copy one of the profiles in
+[`weave_agent_adapter/profiles/`](weave_agent_adapter/profiles/), then declare:
 
 - native event to canonical action mappings;
 - dotted JSON payload fields;
 - optional thread, transcript-enrichment, and configuration-surface behavior;
 - user/local settings paths and the events to register.
 
-Missing lifecycle events degrade by omission. See the
+Common fields may be supplemented by event-specific field paths. Missing
+lifecycle events and optional metadata degrade by omission. See the
 [harness profile contract](specs/HARNESS_PROFILES.md) for the supported shape.
 
 ## Design contracts

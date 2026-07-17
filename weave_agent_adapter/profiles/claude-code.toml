@@ -1,6 +1,5 @@
 # Harness profile: Claude Code. See specs/HARNESS_PROFILES.md.
-# Field paths verified against a real Claude Code 2.1.201 session, except
-# PermissionRequest/PermissionDenied (bypassed in headless, still provisional).
+# Field paths follow Claude Code's documented hook payloads.
 
 [harness]
 name    = "claude-code"
@@ -14,7 +13,7 @@ PostToolUseFailure = "tool_error"
 PermissionRequest  = "permission_request"
 PermissionDenied   = "permission_denied"
 Stop               = "turn_end"
-SubagentStart      = "subagent_start"      # documented but not emitted in 2.1.201; tracer lazy-opens the span from the first interior tool as a fallback
+SubagentStart      = "subagent_start"
 SubagentStop       = "subagent_stop"
 PreCompact         = "compaction"
 SessionEnd         = "session_end"
@@ -31,10 +30,19 @@ transcript         = "transcript_path"
 cwd                = "cwd"
 agent_id           = "agent_id"            # set on SubagentStop + subagent-interior tools
 agent_type         = "agent_type"          # SubagentStop, e.g. "Explore"
-agent_output       = "last_assistant_message"   # SubagentStop
-denial_reason      = "denial_reason"       # PermissionDenied (provisional, not yet captured)
-compaction_trigger = "trigger"             # PreCompact (provisional, not yet captured)
+model              = "model"
+permission_mode    = "permission_mode"
+compaction_trigger = "trigger"
 effort_level       = "effort.level"        # reasoning effort, e.g. "high" / "xhigh"
+
+[event_fields.PostToolUseFailure]
+tool_error = "error"
+
+[event_fields.PermissionDenied]
+denial_reason = "reason"
+
+[event_fields.Stop]
+pending_work = "background_tasks"
 
 [thread]
 source     = "transcript_root"             # conversation id = first message's id in the transcript

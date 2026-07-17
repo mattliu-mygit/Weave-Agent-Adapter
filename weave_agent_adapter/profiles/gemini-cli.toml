@@ -1,0 +1,41 @@
+# Harness profile: Gemini CLI. See specs/HARNESS_PROFILES.md.
+# Uses stable, non-streaming lifecycle hooks. Optional capabilities that Gemini
+# does not expose here are deliberately omitted and degrade by absence.
+
+[harness]
+name = "gemini-cli"
+
+[events]
+SessionStart = "session_start"
+BeforeAgent  = "turn_start"
+BeforeModel  = "turn_update"
+BeforeTool   = "tool_pre"
+AfterTool    = "tool_post"
+AfterAgent   = "turn_end"
+PreCompress  = "compaction"
+SessionEnd   = "session_end"
+
+[fields]
+session_id         = "session_id"
+cwd                = "cwd"
+prompt             = "prompt"
+tool_name          = "tool_name"
+tool_input         = "tool_input"
+tool_output        = "tool_response"
+assistant_message  = "prompt_response"
+compaction_trigger = "trigger"
+
+[event_fields.BeforeModel]
+model = "llm_request.model"
+
+[event_fields.AfterTool]
+tool_error = "tool_response.error"
+
+[registration]
+user_path  = "~/.gemini/settings.json"
+local_path = ".gemini/settings.json"
+command    = "weave-agent-adapter hook --harness gemini-cli --success-json"
+events = [
+  "SessionStart", "BeforeAgent", "BeforeModel", "BeforeTool", "AfterTool",
+  "AfterAgent", "PreCompress", "SessionEnd",
+]

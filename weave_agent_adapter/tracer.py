@@ -60,7 +60,7 @@ class Tracer:
         canonical = self.profile.canonical_event(wire.event)
         if canonical is None:
             return  # unmapped native event, ignore
-        fields = self.profile.extract(wire.payload)
+        fields = self.profile.extract(wire.payload, wire.event)
         sid = fields.get("session_id")
         if not sid:
             return
@@ -155,6 +155,8 @@ class Tracer:
             return
         if s.current_turn and s.current_turn.ended_at is None:
             s.current_turn.output_text = self.redactor.scrub(f.get("assistant_message"))
+        if f.get("pending_work"):
+            return
         self._close_turn(s, at)
 
     def _close_turn(self, s: Session, at) -> None:
@@ -274,16 +276,19 @@ class Tracer:
         # approval is inferred: a tool that ran was allowed
         if tc.permission:
             tc.permission.decision = Decision.ALLOW
+        error = f.get("tool_error")
+        ok = ok and error is None
         tc.status = ToolStatus.OK if ok else ToolStatus.ERROR
         tc.ended_at = at
         tc.output = self.redactor.scrub(f.get("tool_output")) if ok else None
-        tc.error = None if ok else self.redactor.scrub(f.get("tool_output") or "error")
+        tc.error = None if ok else self.redactor.scrub(
+            error or f.get("tool_output") or "error")
 
     # ------- subagents & compaction -------
 
-    def _open_subagent(self, t: Turn, aid, atype, at, output=None, closed=False) -> dict:
+    def _open_subagent(self, t: Turn, aid, atype, at, closed=False) -> dict:
         rec = {"agent_id": aid, "type": atype, "started_at": at,
-               "ended_at": at if closed else None, "output": output}
+               "ended_at": at if closed else None}
         t.subagents[aid] = rec
         return rec
 
@@ -312,7 +317,6 @@ class Tracer:
             self._open_subagent(t, aid, f.get("agent_type"), at, closed=True)
             return
         rec["ended_at"] = at
-        rec["output"] = self.redactor.scrub(f.get("agent_output"))
 
     def _on_compaction(self, sid, f, at) -> None:
         s = self.sessions.get(sid)

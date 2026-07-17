@@ -66,6 +66,12 @@ def _env_truthy(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _hook_result(args) -> int:
+    if getattr(args, "success_json", False):
+        print("{}")
+    return 0
+
+
 def _append_private_jsonl(path: str, record: dict) -> None:
     """Append one JSON record while keeping the payload-bearing file user-only."""
     flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
@@ -121,7 +127,7 @@ def _ensure_sidecar(deadline: float = 0.5) -> bool:
 def cmd_hook(args) -> int:
     captured_at = time.time()
     if _env_truthy("WEAVE_AGENT_ADAPTER_DISABLE"):
-        return 0
+        return _hook_result(args)
     # the command-hook adapter: forward the raw payload, never block or break
     try:
         raw = _read_stdin()
@@ -129,10 +135,10 @@ def cmd_hook(args) -> int:
             payload = json.loads(raw)
         except (TypeError, ValueError) as exc:
             diagnose("payload_parse", harness=args.harness, event=args.event, error=exc)
-            return 0
+            return _hook_result(args)
         if not isinstance(payload, dict):
             diagnose("payload_type", harness=args.harness, event=args.event)
-            return 0
+            return _hook_result(args)
         event = {
             "v": 1, "harness": args.harness, "event": args.event,
             "captured_at": captured_at, "payload": payload,
@@ -145,7 +151,7 @@ def cmd_hook(args) -> int:
                 diagnose("sidecar_unavailable", harness=args.harness, event=args.event)
     except Exception as exc:
         diagnose("hook", harness=args.harness, event=args.event, error=exc)
-    return 0
+    return _hook_result(args)
 
 
 def cmd_sidecar(args) -> int:
@@ -208,6 +214,8 @@ def main(argv=None) -> int:
     h = sub.add_parser("hook")
     h.add_argument("--harness", required=True)
     h.add_argument("--event", required=True)
+    h.add_argument("--success-json", action="store_true",
+                   help="print an empty JSON object after handling the hook")
     h.set_defaults(fn=cmd_hook)
 
     s = sub.add_parser("sidecar")

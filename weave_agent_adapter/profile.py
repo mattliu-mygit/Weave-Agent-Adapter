@@ -38,11 +38,13 @@ class Profile:
     events: dict          # native event -> canonical action
     fields: dict          # canonical field -> dotted path in payload
     registration: dict
+    event_fields: dict = None  # native event -> canonical field overrides
     thread: dict = None      # [thread]: how to derive the conversation id
     enrich: dict = None      # [enrich]: named turn-enrichment strategy (LLM-call internals)
     config_surface: dict = None   # [config_surface]: artifact paths hashed into config_version
 
     def __post_init__(self):
+        self.event_fields = self.event_fields or {}
         self.thread = self.thread or {}
         self.enrich = self.enrich or {}
         self.config_surface = self.config_surface or {}
@@ -54,10 +56,13 @@ class Profile:
         path = self.fields.get(canonical)
         return _dig(payload, path) if path else None
 
-    def extract(self, payload: dict) -> dict:
+    def extract(self, payload: dict, native_event: str = None) -> dict:
+        mappings = dict(self.fields)
+        if native_event:
+            mappings.update(self.event_fields.get(native_event, {}))
         out = {}
-        for canonical in self.fields:
-            val = self.field(payload, canonical)
+        for canonical, path in mappings.items():
+            val = _dig(payload, path) if path else None
             if val is not None:
                 out[canonical] = val
         return out
@@ -70,6 +75,10 @@ class Profile:
             events=dict(d.get("events", {})),
             fields=dict(d.get("fields", {})),
             registration=dict(d.get("registration", {})),
+            event_fields={
+                event: dict(fields)
+                for event, fields in d.get("event_fields", {}).items()
+            },
             thread=dict(d.get("thread", {})),
             enrich=dict(d.get("enrich", {})),
             config_surface=dict(d.get("config_surface", {})),
