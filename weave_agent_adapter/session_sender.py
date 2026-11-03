@@ -208,7 +208,10 @@ class SessionSender:
         return t
 
     def _agent_turns(self, job: _Job, t, reader) -> list:
-        return agent_turns(reader, t, job.agents, job.facts, job.ctx, self.redactor, self._sent)
+        written = self.writer.written_turns(job.ctx.harness, job.ctx.session_id)
+        return [(key, turn) for key, turn in
+                agent_turns(reader, t, job.agents, job.facts, job.ctx, self.redactor, self._sent)
+                if key[1] not in written]
 
     def _process(self, job: _Job) -> None:
         reader = READERS[job.ctx.harness]
@@ -216,19 +219,27 @@ class SessionSender:
         thread_id = reader.thread_id(t)
         pending = [turn_id for turn_id in self._turns_to_send(t, job, reader)
                    if (thread_id, turn_id) not in self._sent]
-        if not pending:
+        agents = self._agent_turns(job, t, reader)
+        if not pending and not agents:
             return
         first = reader.select_turn(t, reader.turn_ends(t)[0][0])
         session_case = reader.session_case(t, first, job.ctx)
+        prefix = {"harness": job.ctx.harness, "session_id": job.ctx.session_id, "session_case": session_case}
         for number, turn_id in enumerate(pending):
             turn = reader.select_turn(t, turn_id)
-            agents = self._agent_turns(job, t, reader) if number == len(pending) - 1 else []
-            body = {"harness": job.ctx.harness, "session_id": job.ctx.session_id, "session_case": session_case,
-                    "turns": [reader.turn_records(t, turn, job.facts, job.ctx, self.redactor),
-                              *(agent_turn for _, agent_turn in agents)]}
+            riders = agents if number == len(pending) - 1 else []
+            body = {**prefix, "turns": [reader.turn_records(t, turn, job.facts, job.ctx, self.redactor),
+                                        *(agent_turn for _, agent_turn in riders)]}
             self._write(body, f"turn-v1:{job.ctx.harness}:{job.ctx.session_id}:{turn_id}")
             self._sent.add((thread_id, turn_id))
-            self._sent.update(key for key, _ in agents)
+            self._sent.update(key for key, _ in riders)
+        if not pending:
+            # Subagent turns that finished after their parent's last turn was sent go on their own,
+            # each under its own key, because the parent turn's key already holds another body.
+            for key, agent_turn in agents:
+                self._write({**prefix, "turns": [agent_turn]},
+                            f"turn-v1:{job.ctx.harness}:{job.ctx.session_id}:{key[1]}")
+                self._sent.add(key)
 
     def _write(self, job: dict, key: str) -> None:
         with self._lock:

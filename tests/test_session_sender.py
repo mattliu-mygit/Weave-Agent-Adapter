@@ -60,6 +60,43 @@ def test_a_stop_sends_its_turn_with_the_subagent_turns_it_ran(tmp_path):
     assert [(t["agent_id"], t["turn_id"]) for t in job["turns"]] == [(None, "P1"), ("C1", "K1")]
 
 
+class _WrittenWriter(_Writer):
+    def written_turns(self, harness, session_id):
+        return {"P1", "K1"}
+
+
+def test_a_subagent_turn_that_ends_after_its_parent_was_sent_goes_on_its_own(tmp_path):
+    parent = ct.write(tmp_path / "parent.jsonl", ct.parent_with_subagent())
+    child = ct.write(tmp_path / "child.jsonl", ct.subagent_fork())
+    writer = _Writer()
+    sender = _sender(tmp_path, writer)
+    sender.handle(_event("Stop", 1.0, session_id="T3", transcript_path=parent, turn_id="P1"))
+    while sender.has_active_work():
+        time.sleep(0.01)
+
+    sender.handle(_event("SubagentStop", 2.0, session_id="T3", agent_id="C1", agent_transcript_path=child,
+                         turn_id="K1"))
+    sender.sweep(now=10_000.0, ttl=1.0)
+    _finish(sender)
+
+    assert [[(t["agent_id"], t["turn_id"]) for t in job["turns"]] for job in writer.jobs] == [
+        [(None, "P1")], [("C1", "K1")]]
+
+
+def test_a_restarted_sender_does_not_resend_written_subagent_turns(tmp_path):
+    parent = ct.write(tmp_path / "parent.jsonl", ct.parent_with_subagent())
+    child = ct.write(tmp_path / "child.jsonl", ct.subagent_fork())
+    writer = _WrittenWriter()
+    sender = _sender(tmp_path, writer)
+
+    sender.handle(_event("SubagentStop", 1.0, session_id="T3", agent_id="C1", agent_transcript_path=child,
+                         turn_id="K1"))
+    sender.handle(_event("Stop", 2.0, session_id="T3", transcript_path=parent, turn_id="P1"))
+    _finish(sender)
+
+    assert writer.jobs == []
+
+
 def test_a_later_stop_does_not_resend_a_subagent_turn(tmp_path):
     rows = ct.parent_with_subagent()
     parent = ct.write(tmp_path / "parent.jsonl", rows)
