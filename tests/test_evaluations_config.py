@@ -24,3 +24,11 @@ def test_defaults_point_at_prod_and_every_harness(tmp_path):
     ev = config.load_config(str(tmp_path / "missing.toml")).evaluations
     assert (ev.base_url, ev.wandb_base_url, ev.harnesses) == (
         "https://evaluations.wandb.ai", "https://api.wandb.ai", ("claude-code", "codex", "gemini-cli"))
+
+
+def test_rollout_context_is_off_unless_configured(tmp_path):
+    path = tmp_path / "c.toml"
+    path.write_text('[evaluations]\nrollout_context = true\n')
+
+    assert config.load_config(str(tmp_path / "missing.toml")).evaluations.rollout_context is False
+    assert config.load_config(str(path)).evaluations.rollout_context is True

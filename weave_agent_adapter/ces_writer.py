@@ -25,6 +25,18 @@ DEFAULT_STATE_DIR = os.path.expanduser(os.environ.get(
     "WEAVE_AGENT_ADAPTER_EVALUATIONS_SESSIONS", "~/.weave-agent-adapter/evaluations-sessions"))
 
 
+def rollout_context(role: str, dataset_id: str, record_key: str) -> dict:
+    """CES's rollout_context v1 for a new Trajectory. References the adapter lacks are null.
+
+    Workaround until wandb/core#60301 deploys: CES rejects or ignores the field before then,
+    and a Trajectory can't get a context after creation, so `[evaluations] rollout_context`
+    stays off until every CES the adapter writes to serves it. Then make it the default and
+    delete the flag."""
+    return {"protocol_version": 1, "role": role, "experiment_dataset_id": dataset_id,
+            "client_record_key": record_key, "evaluated_trajectory_id": None,
+            "models_run_ref": None, "trace_ref": None}
+
+
 def already_stored(error) -> bool:
     """CES holds a different body under this key, which only an earlier write of this turn sent."""
     return getattr(error, "status", None) == 409 and getattr(error, "code", None) == "idempotency_key_reuse"
@@ -32,11 +44,13 @@ def already_stored(error) -> bool:
 
 class CesWriter:
     def __init__(self, client, scope_ref: str, dataset_id: str, state_dir: str | None = None,
-                 namespace: str = "wandb"):
+                 namespace: str = "wandb", rollout_context: bool = False):
         scope = urllib.parse.quote(scope_ref, safe="")
         base = f"/v1/namespaces/{namespace}/scopes/{scope}/datasets/{dataset_id}"
         self.cases_path, self.trajectories_path = base + "/cases", base + "/trajectories"
         self.client = client
+        self.dataset_id = dataset_id
+        self.rollout_context = rollout_context
         self.state_dir = state_dir or DEFAULT_STATE_DIR
 
     def write_turn(self, job: dict) -> None:
@@ -52,9 +66,11 @@ class CesWriter:
                     diagnose("ces_subagent_root_missing", harness=harness)
                     root = state["session_case"]["id"]
                 parent = state["agents"].get(turn["parent_agent_id"]) or s
-                body = {"trajectories": [{"name": f"{harness} subagent {agent}", "root_case_id": root,
-                                          "parent_trajectory_id": parent}]}
-                result = self.client.post(self.trajectories_path, body, f"subagent-v1:{harness}:{sid}:{agent}")
+                key = f"subagent-v1:{harness}:{sid}:{agent}"
+                body = {"trajectories": [self._trajectory(
+                    {"name": f"{harness} subagent {agent}", "root_case_id": root, "parent_trajectory_id": parent},
+                    "child_agent", key)]}
+                result = self.client.post(self.trajectories_path, body, key)
                 state["agents"][agent] = result["trajectory_ids"][0]
                 self._save(harness, sid, state)
             trajectory = s if agent is None else state["agents"][agent]
@@ -85,8 +101,9 @@ class CesWriter:
             ("session_case", self.cases_path, f"session-v1:{harness}:{sid}",
              lambda: {"cases": [job["session_case"]]}),
             ("session_trajectory", self.trajectories_path, f"session-trajectory-v1:{harness}:{sid}",
-             lambda: {"trajectories": [{"name": f"{harness} session {sid}",
-                                        "root_case_id": state["session_case"]["id"]}]}),
+             lambda: {"trajectories": [self._trajectory(
+                 {"name": f"{harness} session {sid}", "root_case_id": state["session_case"]["id"]},
+                 "evaluated_rollout", f"session-trajectory-v1:{harness}:{sid}")]}),
         ):
             entry = state[name]
             if entry.get("id"):
@@ -99,6 +116,11 @@ class CesWriter:
             entry["id"] = (result.get("case_ids") or result.get("trajectory_ids"))[0]
             self._save(harness, sid, state)
         return state["session_trajectory"]["id"]
+
+    def _trajectory(self, entry: dict, role: str, key: str) -> dict:
+        if not self.rollout_context:
+            return entry
+        return {**entry, "rollout_context": rollout_context(role, self.dataset_id, key)}
 
     def _path(self, harness: str, sid: str) -> str:
         return os.path.join(self.state_dir, re.sub(r"[^A-Za-z0-9_.-]", "_", f"{harness}-{sid}") + ".json")

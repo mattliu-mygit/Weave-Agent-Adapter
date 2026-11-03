@@ -230,7 +230,8 @@ def _session_sender(cfg, redactor, profiles_dir=None):
                 paths[harness] = (load_profile(harness, profiles_dir).config_surface or {}).get("paths")
             except Exception:
                 pass                            # fingerprinting must never stop sending
-        return SessionSender(CesWriter(client, state["scope_ref"], state["dataset_id"]), dlq.DEFAULT_PATH,
+        writer = CesWriter(client, state["scope_ref"], state["dataset_id"], rollout_context=ev.rollout_context)
+        return SessionSender(writer, dlq.DEFAULT_PATH,
                              redactor, __version__, harnesses=ev.harnesses, config_paths=paths)
     except Exception as exc:
         diagnose("ces_config", error=exc)
@@ -269,7 +270,7 @@ def cmd_evaluations(args) -> int:
         if not state:
             print("run `weave-agent-adapter evaluations setup` first", file=sys.stderr)
             return 2
-        writer = CesWriter(client, state["scope_ref"], state["dataset_id"])
+        writer = CesWriter(client, state["scope_ref"], state["dataset_id"], rollout_context=ev.rollout_context)
         try:
             result = dlq.replay(dlq.DEFAULT_PATH, lambda entry: writer.write_turn(entry["job"]))
         except dlq.ReplayInProgress as exc:

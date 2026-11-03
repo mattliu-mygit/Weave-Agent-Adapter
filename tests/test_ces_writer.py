@@ -152,3 +152,24 @@ def test_written_turns_survive_a_restart(fake, tmp_path):
     _writer(fake, tmp_path).write_turn(_job(tmp_path))
 
     assert _writer(fake, tmp_path).written_turns("codex", "T3") == {"P1", "K1"}
+
+
+def test_rollout_context_rides_on_new_trajectories_when_turned_on(fake, tmp_path):
+    writer = CesWriter(CesClient(fake.url, "key", attempts=1), "S", "D", state_dir=str(tmp_path / "sessions"),
+                       rollout_context=True)
+
+    writer.write_turn(_job(tmp_path))
+
+    bodies = {headers["Idempotency-Key"]: body for _, headers, body in fake.requests}
+    session = bodies["session-trajectory-v1:codex:T3"]["trajectories"][0]["rollout_context"]
+    subagent = bodies["subagent-v1:codex:T3:C1"]["trajectories"][0]["rollout_context"]
+    assert session == {"protocol_version": 1, "role": "evaluated_rollout", "experiment_dataset_id": "D",
+                       "client_record_key": "session-trajectory-v1:codex:T3", "evaluated_trajectory_id": None,
+                       "models_run_ref": None, "trace_ref": None}
+    assert (subagent["role"], subagent["client_record_key"]) == ("child_agent", "subagent-v1:codex:T3:C1")
+
+
+def test_rollout_context_stays_off_by_default(fake, tmp_path):
+    _writer(fake, tmp_path).write_turn(_job(tmp_path))
+
+    assert all("rollout_context" not in t for _, _, body in fake.requests for t in body.get("trajectories", []))

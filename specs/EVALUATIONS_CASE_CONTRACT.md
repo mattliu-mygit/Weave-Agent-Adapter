@@ -67,7 +67,10 @@ project = "entity/project"      # required
 # name = "agent-sessions"       # the Dataset
 # base_url = "https://evaluations.wandb.ai"
 # wandb_base_url = "https://api.wandb.ai"   # its ~/.netrc entry holds the API key
+# rollout_context = false       # turn on once CES serves wandb/core#60301
 ```
+
+**`rollout_context` (temporary switch).** With it on, each new session Trajectory carries CES's rollout context v1 (role `evaluated_rollout`), and each subagent Trajectory carries role `child_agent`. Both use the experiment Dataset ID and the request's Idempotency-Key as `client_record_key`, with null run and trace references. Frozen Trajectory reads include only Trajectories that have a context, and a context can't be added after creation. So turn the switch on as soon as the CES being written to serves wandb/core#60301. Once every CES does, make it the default and delete the switch. A session keeps the Trajectory body it started with, so turning it on mid-session leaves that session's earlier Trajectories without one.
 
 `weave-agent-adapter evaluations setup` resolves the project's `scope_ref` through GraphQL, creates the Dataset (key `dataset-v1:{project}:{name}`), declares the fields, and writes `{project, name, scope_ref, dataset_id}` to `~/.weave-agent-adapter/evaluations.json`. The sidecar sends nothing until that file matches the config.
 

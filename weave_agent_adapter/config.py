@@ -45,6 +45,7 @@ class EvaluationsConfig:
     project: str = ""                                 # "entity/project" on wandb_base_url
     name: str = "agent-sessions"                      # the CES Dataset that holds the sessions
     harnesses: tuple = ("claude-code", "codex", "gemini-cli")
+    rollout_context: bool = False                     # turn on once CES serves wandb/core#60301
 
 
 @dataclass
@@ -96,6 +97,7 @@ def load_config(path=None) -> Config:
         project=str(ev.get("project", "")),
         name=str(ev.get("name", EvaluationsConfig.name)),
         harnesses=tuple(ev.get("harnesses", EvaluationsConfig.harnesses)),
+        rollout_context=bool(ev.get("rollout_context", False)),
     )
     return c
 
