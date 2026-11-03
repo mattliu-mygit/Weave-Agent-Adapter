@@ -12,7 +12,7 @@ session Case ── root of ──> session Trajectory S
 ```
 
 - **The session Case** holds the session's first-turn facts. It is written once and never changes.
-- **Member Cases** carry `trajectory_id` (S, or their subagent's Trajectory) and `session_trajectory_id` (always S), so a reader can find the session from any Case.
+- **Member Cases** belong to a Trajectory (S, or their subagent's Trajectory), which the writer sets as the Case's CES `trajectory_id` attribute, not an input field. Their `session_trajectory_id` input is always S, so a reader can find the session from any Case.
 - **A turn's Cases** share `turn_id`. The turn's first Case by start time has `step_index` 0, carries the turn totals, and takes the turn's Scores. It is usually the user message; a turn that starts without a prompt starts with a reply or a tool call.
 - **Codex operations**, the commands an exec tool runs, fold into their `tool_call` Case as `exit_code`, `error`, and `duration_ms`.
 
@@ -52,7 +52,7 @@ Each request's Idempotency-Key comes from what it writes, and a replay sends a b
 | `PATCH .../datasets/{d}/cases` | that subagent's Cases for the turn | `turn-v1:{harness}:{session_id}:{agent_turn_id}` |
 
 - **The session file**, `~/.weave-agent-adapter/evaluations-sessions/{harness}-{session_id}.json`, keeps the session Case, S, and subagent IDs. Each body is saved before it is sent, so after a crash between sending and saving, the stored body is resent and CES returns the original ID.
-- **Subagent turns** are written with the parent turn that ran them, parents first. Codex's `SubagentStop` names the subagent's transcript, Claude Code keeps them in the session's `subagents` directory, and the parent's `Stop` sends their finished turns. A Claude Code `Stop` with background tasks still running sends nothing.
+- **Subagent turns** are written with the parent turn that ran them, parents first. Codex's `SubagentStop` names the subagent's transcript, and Claude Code keeps them in the session's `subagents` directory, including `subagents/workflows/`. A `SubagentStop` or the parent's `Stop` sends their finished turns. A subagent's Trajectory is rooted at the Case that launched it, so a subagent whose launching turn isn't written yet waits for a later job. A Claude Code fork's copy of its parent's history is not part of the fork's turns. A Claude Code `Stop` with background tasks still running sends nothing.
 - **Retries:** the client retries network errors, 429, and 5xx three times, honoring `Retry-After`.
 - **Dead letters:** a turn that still fails is one line in `~/.weave-agent-adapter/evaluations-dlq.jsonl` holding the whole turn job (format v2). `weave-agent-adapter evaluations replay` reruns each job from the top.
 - **409 `idempotency_key_reuse`** on a turn counts as already stored.
