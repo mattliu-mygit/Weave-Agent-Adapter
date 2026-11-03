@@ -174,3 +174,25 @@ def test_rollout_context_stays_off_by_default(fake, tmp_path):
     _writer(fake, tmp_path).write_turn(_job(tmp_path))
 
     assert all("rollout_context" not in t for _, _, body in fake.requests for t in body.get("trajectories", []))
+
+
+def test_a_reused_key_on_a_spawning_turn_reads_back_its_case_ids(fake, tmp_path):
+    job = _job(tmp_path)
+    parent = job["turns"][0]
+    answer = fake.respond
+
+    def respond(method, path, headers, body):
+        if headers.get("Idempotency-Key") == "turn-v1:codex:T3:P1":
+            return 409, {}, {"error": {"code": "idempotency_key_reuse", "message": "scripted"}}
+        if method == "GET" and "/trajectories/" in path and path.split("?")[0].endswith("/cases"):
+            stored = [{"case_id": f"stored-{c['input']['step_index']}",
+                       "input": {"turn_id": "P1", "step_index": c["input"]["step_index"]}} for c in parent["cases"]]
+            return 200, {}, {"cases": stored, "next_cursor": None}
+        return answer(method, path, headers, body)
+    fake.respond = respond
+
+    _writer(fake, tmp_path).write_turn(job)
+
+    subagent = next(body for _, h, body in fake.requests if h.get("Idempotency-Key") == "subagent-v1:codex:T3:C1")
+    launch = parent["cases"][parent["spawns"]["C1"]]["input"]["step_index"]
+    assert subagent["trajectories"][0]["root_case_id"] == f"stored-{launch}"

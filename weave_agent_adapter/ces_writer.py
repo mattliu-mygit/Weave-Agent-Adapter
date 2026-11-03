@@ -46,7 +46,8 @@ class CesWriter:
     def __init__(self, client, scope_ref: str, dataset_id: str, state_dir: str | None = None,
                  namespace: str = "wandb", rollout_context: bool = False):
         scope = urllib.parse.quote(scope_ref, safe="")
-        base = f"/v1/namespaces/{namespace}/scopes/{scope}/datasets/{dataset_id}"
+        self.scope_path = f"/v1/namespaces/{namespace}/scopes/{scope}"
+        base = f"{self.scope_path}/datasets/{dataset_id}"
         self.cases_path, self.trajectories_path = base + "/cases", base + "/trajectories"
         self.client = client
         self.dataset_id = dataset_id
@@ -87,11 +88,31 @@ class CesWriter:
                 if not already_stored(error):
                     raise
                 diagnose("ces_already_stored", harness=harness)
-                result = None
+                # The stored turn's Case IDs still root the subagents it launched.
+                result = self._stored_case_ids(trajectory, turn) if turn["spawns"] else None
             for spawned, index in turn["spawns"].items() if result is not None else ():
                 state["agent_roots"].setdefault(spawned, result.get("case_ids", [])[index])
             state["turns"].append(turn["turn_id"])
             self._save(harness, sid, state)
+
+    def _stored_case_ids(self, trajectory: str, turn: dict) -> dict | None:
+        """The Case IDs CES already holds for `turn`, in the turn's order, or None."""
+        by_step, cursor = {}, None
+        try:
+            while True:
+                query = "?limit=1000" + (f"&cursor={urllib.parse.quote(cursor)}" if cursor else "")
+                page = self.client.request("GET", f"{self.scope_path}/trajectories/{trajectory}/cases{query}", None)
+                for case in page.get("cases", []):
+                    if (case.get("input") or {}).get("turn_id") == turn["turn_id"]:
+                        by_step[case["input"].get("step_index")] = case["case_id"]
+                cursor = page.get("next_cursor")
+                if not cursor:
+                    break
+        except Exception:
+            diagnose("ces_stored_cases_unreadable")
+            return None
+        ids = [by_step.get(case["input"].get("step_index")) for case in turn["cases"]]
+        return {"case_ids": ids} if all(ids) else None
 
     def written_turns(self, harness: str, sid: str) -> set:
         """Turn IDs this session's file records as written, so a restart does not resend them."""

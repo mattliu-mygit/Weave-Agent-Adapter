@@ -18,6 +18,9 @@ class FakeCes:
             def do_PATCH(self):
                 self.do_POST()
 
+            def do_GET(self):
+                self.do_POST()
+
             def do_POST(self):
                 raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
                 parsed = json.loads(raw) if raw else None
