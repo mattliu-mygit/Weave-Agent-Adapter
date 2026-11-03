@@ -74,6 +74,7 @@ class SessionSender:
         self._lock = threading.Lock()
         self._pending = 0             # jobs queued or running
         self._inflight = None         # (job, key) being written
+        self._queued_sweeps: dict = {}  # session id -> its queued sweep job, not started yet
         self._sent: set = set()       # (thread_id, turn_id); worker thread only
         self._abort = threading.Event()
         self._thread = threading.Thread(target=self._run, name="ces-sender", daemon=True)
@@ -139,15 +140,25 @@ class SessionSender:
             if inflight:
                 job, key = inflight
                 dlq.append(self.dlq_path, [dlq.record(job, key, None, "sidecar_exit", 0)])
-            # Both threads take jobs from the same queue (each job is taken once), and _sent
-            # is a set whose add and contains are atomic under the GIL, so sharing it is safe.
+            # Jobs still queued aren't built, which can take long: each session's transcript
+            # goes to the DLQ once, and `evaluations replay` builds its unwritten turns from it.
+            rebuilds = {}
             while True:
                 try:
                     job = self._queue.get_nowait()
                 except queue.Empty:
                     break
-                if job is not None:         # skip the shutdown sentinel
-                    self._run_job(job)      # _write sees _abort and writes it to the DLQ
+                if job is None:             # the shutdown sentinel
+                    continue
+                entry = rebuilds.setdefault(job.ctx.session_id, {
+                    "transcript": job.transcript, "agents": [], "ctx": asdict(job.ctx), "final": False})
+                entry["agents"] = list(dict.fromkeys([*entry["agents"], *job.agents]))
+                entry["final"] = entry["final"] or job.final
+                with self._lock:
+                    self._pending -= 1
+            if rebuilds:
+                dlq.append(self.dlq_path, [dlq.rebuild_record(entry, "sidecar_exit")
+                                           for entry in rebuilds.values()])
             self._queue.put(None)           # so the worker still exits when its write returns
             self._thread.join(5.0)
 
@@ -158,9 +169,19 @@ class SessionSender:
                           s.config_version)
         facts = {k: ToolFacts(v.hook_tool_name, v.permission_requested, v.completed)
                  for k, v in s.tools.items()}
+        job = _Job(s.transcript, turn_id, list(s.agents), ctx, facts, sweep, final)
+        coalesce = sweep and not final
         with self._lock:
+            queued = self._queued_sweeps.get(sid) if coalesce else None
+            if queued is not None:
+                # The queued sweep reads the newest transcript when it runs, so a burst of
+                # SubagentStops costs one job, not one each.
+                queued.agents, queued.facts, queued.ctx = job.agents, job.facts, job.ctx
+                return
+            if coalesce:
+                self._queued_sweeps[sid] = job
             self._pending += 1
-        self._queue.put(_Job(s.transcript, turn_id, list(s.agents), ctx, facts, sweep, final))
+        self._queue.put(job)
 
     # ------- worker thread -------
 
@@ -172,6 +193,9 @@ class SessionSender:
             self._run_job(job)
 
     def _run_job(self, job: _Job) -> None:
+        with self._lock:
+            if self._queued_sweeps.get(job.ctx.session_id) is job:
+                del self._queued_sweeps[job.ctx.session_id]
         try:
             self._process(job)
         except Exception as error:
@@ -224,13 +248,17 @@ class SessionSender:
             diagnose("ces_end_record_timeout", harness=job.ctx.harness)
         return t
 
-    def _agent_turns(self, job: _Job, t, reader) -> list:
+    def _agent_turns(self, job: _Job, t, reader, pending: list) -> list:
         # Subagent turns are deduplicated by what the session file records as written, not by
         # _sent, because the writer defers a subagent whose launching turn isn't written yet.
         written = self.writer.written_turns(job.ctx.harness, job.ctx.session_id)
+        # With no parent turn to write first, a subagent the session file can't root yet would
+        # only be deferred, so its turns aren't built.
+        only = (None if pending or job.final
+                else self.writer.rootable_agents(job.ctx.harness, job.ctx.session_id))
         return [(key, turn) for key, turn in
                 agent_turns(reader, t, job.agents, job.facts, job.ctx, self.redactor, self._sent,
-                            final=job.final)
+                            final=job.final, only=only)
                 if key[1] not in written]
 
     def _process(self, job: _Job) -> None:
@@ -239,7 +267,7 @@ class SessionSender:
         thread_id = reader.thread_id(t)
         pending = [turn_id for turn_id in self._turns_to_send(t, job, reader)
                    if (thread_id, turn_id) not in self._sent]
-        agents = self._agent_turns(job, t, reader)
+        agents = self._agent_turns(job, t, reader, pending)
         if not pending and not agents:
             return
         ends = reader.turn_ends(t)
@@ -294,8 +322,9 @@ def _turn_open(t, job: _Job, reader):
     return ends[turn_id] is None if turn_id in ends else None
 
 
-def agent_turns(reader, t, paths, facts, ctx, redactor, sent=frozenset(), final=False) -> list:
-    """Finished, unsent subagent turns as ((thread_id, turn_id), job turn), parents first."""
+def agent_turns(reader, t, paths, facts, ctx, redactor, sent=frozenset(), final=False, only=None) -> list:
+    """Finished, unsent subagent turns as ((thread_id, turn_id), job turn), parents first.
+    With `only`, just the subagents whose thread IDs it holds."""
     loaded = []
     for path in dict.fromkeys([*paths, *reader.subagent_paths(t)]):
         try:
@@ -311,6 +340,8 @@ def agent_turns(reader, t, paths, facts, ctx, redactor, sent=frozenset(), final=
     found = []
     for a in loaded:
         thread = reader.thread_id(a)
+        if only is not None and thread not in only:
+            continue
         for turn_id, end in reader.turn_ends(a):
             if (end is None and not final) or (thread, turn_id) in sent:
                 continue

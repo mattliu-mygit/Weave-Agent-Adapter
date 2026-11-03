@@ -90,7 +90,6 @@ class CesWriter:
                 if root is None or parent is None:
                     # CES roots a subagent's Trajectory at a Case of its parent's Trajectory, so the
                     # subagent waits until the turn that launched it is written; a later job sends it.
-                    diagnose("ces_subagent_deferred", harness=harness)
                     deferred.append(turn["turn_id"])
                     continue
                 key = f"subagent-v1:{harness}:{sid}:{agent}"
@@ -128,6 +127,8 @@ class CesWriter:
                 state["agent_roots"].setdefault(spawned, root)
             state["turns"].append(turn["turn_id"])
             self._save(harness, sid, state)
+        if deferred:
+            diagnose("ces_subagent_deferred", harness=harness)
         return deferred
 
     def _retry_root(self, state: dict, agent: str) -> str | None:
@@ -169,6 +170,11 @@ class CesWriter:
         with os.fdopen(fd, "w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             yield
+
+    def rootable_agents(self, harness: str, sid: str) -> set:
+        """Subagents this session's file can root now or already holds Trajectories for."""
+        state = self._load(harness, sid)
+        return set(state["agents"]) | set(state["agent_roots"]) | set(state["unrooted"])
 
     def written_turns(self, harness: str, sid: str) -> set:
         """Turn IDs this session's file records as written, so a restart does not resend them."""

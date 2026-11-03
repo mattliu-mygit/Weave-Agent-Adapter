@@ -21,6 +21,9 @@ class _Writer:
     def __init__(self, error=None):
         self.jobs, self.error = [], error
 
+    def rootable_agents(self, harness, session_id):
+        return {agent for job in self.jobs for turn in job["turns"] for agent in turn["spawns"]}
+
     def write_turn(self, job, final=False):
         self.jobs.append(job)
         if self.error:
@@ -263,3 +266,63 @@ def test_a_turn_that_fails_to_build_leaves_a_rebuild_entry(tmp_path):
     entry = json.loads(line)
     assert (entry["key"], entry["error_code"]) == ("rebuild:codex:T1", "FileNotFoundError")
     assert (entry["rebuild"]["transcript"], entry["rebuild"]["final"]) == (missing, False)
+
+
+class _BlockingWriter(_Writer):
+    def __init__(self):
+        super().__init__()
+        self.release = threading.Event()
+
+    def write_turn(self, job, final=False):
+        self.release.wait(5)
+        super().write_turn(job, final)
+
+
+def _wait_until_writing(sender):
+    deadline = time.monotonic() + 5
+    while sender._inflight is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+
+def test_a_burst_of_subagent_stops_queues_one_sweep_per_session(tmp_path):
+    parent = ct.write(tmp_path / "parent.jsonl", ct.parent_with_subagent())
+    child = ct.write(tmp_path / "child.jsonl", ct.subagent_fork())
+    writer = _BlockingWriter()
+    sender = _sender(tmp_path, writer)
+    processed = []
+    process = sender._process
+    sender._process = lambda job: processed.append(job) or process(job)
+
+    sender.handle(_event("SessionStart", 1.0, session_id="T3", transcript_path=parent))
+    sender.handle(_event("Stop", 2.0, session_id="T3", transcript_path=parent, turn_id="P1"))
+    _wait_until_writing(sender)
+    for at in (3.0, 4.0, 5.0):
+        sender.handle(_event("SubagentStop", at, session_id="T3", agent_id="C1", agent_transcript_path=child,
+                             turn_id="K1"))
+    writer.release.set()
+    _finish(sender)
+
+    assert [job.sweep for job in processed] == [False, True]
+    assert [(t["agent_id"], t["turn_id"]) for job in writer.jobs for t in job["turns"]] == [
+        (None, "P1"), ("C1", "K1")]
+
+
+def test_closing_with_queued_jobs_leaves_one_rebuild_entry_per_session(tmp_path):
+    parent = ct.write(tmp_path / "parent.jsonl", ct.parent_with_subagent())
+    child = ct.write(tmp_path / "child.jsonl", ct.subagent_fork())
+    writer = _BlockingWriter()
+    sender = _sender(tmp_path, writer)
+
+    sender.handle(_event("SessionStart", 1.0, session_id="T3", transcript_path=parent))
+    sender.handle(_event("Stop", 2.0, session_id="T3", transcript_path=parent, turn_id="P1"))
+    _wait_until_writing(sender)
+    sender.handle(_event("SubagentStop", 3.0, session_id="T3", agent_id="C1", agent_transcript_path=child,
+                         turn_id="K1"))
+    sender.handle(_event("SessionEnd", 4.0, session_id="T3"))
+    threading.Timer(0.3, writer.release.set).start()
+    sender.close(timeout=0.1)
+
+    entries = [json.loads(line) for line in (tmp_path / "dlq.jsonl").read_text().splitlines()]
+    assert [e["key"] for e in entries if "job" in e] == ["turn-v1:codex:T3:P1"]   # the write in flight
+    [rebuild] = [e["rebuild"] for e in entries if "rebuild" in e]
+    assert (rebuild["transcript"], rebuild["agents"], rebuild["final"]) == (parent, [child], True)
