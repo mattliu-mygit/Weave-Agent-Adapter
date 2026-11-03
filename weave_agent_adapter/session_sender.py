@@ -17,7 +17,7 @@ from __future__ import annotations
 import queue
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 from . import claude_transcript, codex_transcript, dlq, records
 from .config import session_sampled
@@ -176,6 +176,11 @@ class SessionSender:
             self._process(job)
         except Exception as error:
             diagnose("ces_build", harness=job.ctx.harness, error=error)
+            if job.transcript:
+                # The transcript still holds the turns, so `evaluations replay` can build them again.
+                dlq.append(self.dlq_path, [dlq.rebuild_record(
+                    {"transcript": job.transcript, "agents": list(job.agents), "ctx": asdict(job.ctx),
+                     "final": job.final}, type(error).__name__)])
         finally:
             with self._lock:
                 self._pending -= 1
@@ -316,12 +321,16 @@ def agent_turns(reader, t, paths, facts, ctx, redactor, sent=frozenset(), final=
     return [(key, turn) for _, _, key, turn in found]
 
 
-def transcript_jobs(reader, t, ctx: TurnContext, redactor) -> list:
-    """Every turn of a finished session's loaded transcript as (key, job), oldest first.
+def transcript_jobs(reader, t, ctx: TurnContext, redactor, agents=(), final=True) -> list:
+    """Every turn of a loaded transcript as (key, job), oldest first.
 
-    The session is over, so every turn is final, as in the idle sweep. Finished
-    subagent turns ride on the last turn's job."""
-    turn_ids = [turn_id for turn_id, _ in reader.turn_ends(t)]
+    For a session that is over (`final`), every turn is final, as in the idle sweep;
+    otherwise an unended last turn may still be running and is left out. Subagent turns,
+    from the transcript's own subagent files and `agents`, ride on the last turn's job."""
+    ends = reader.turn_ends(t)
+    if ends and ends[-1][1] is None and not final:
+        ends = ends[:-1]
+    turn_ids = [turn_id for turn_id, _ in ends]
     if not turn_ids:
         return []
     session_case = reader.session_case(t, reader.select_turn(t, turn_ids[0]), ctx)
@@ -330,7 +339,7 @@ def transcript_jobs(reader, t, ctx: TurnContext, redactor) -> list:
     for number, turn_id in enumerate(turn_ids):
         turns = [reader.turn_records(t, reader.select_turn(t, turn_id), {}, ctx, redactor)]
         if number == len(turn_ids) - 1:
-            turns += [turn for _, turn in agent_turns(reader, t, [], {}, ctx, redactor, final=True)]
+            turns += [turn for _, turn in agent_turns(reader, t, list(agents), {}, ctx, redactor, final=final)]
         body = {"harness": ctx.harness, "session_id": ctx.session_id, "session_case": session_case,
                 "turns": turns}
         jobs.append((f"turn-v1:{ctx.harness}:{ctx.session_id}:{turn_id}", body))

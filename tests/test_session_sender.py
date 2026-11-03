@@ -250,3 +250,16 @@ def test_the_sweep_sends_a_finished_turn_no_stop_sent(tmp_path):
     _finish(sender)
 
     assert [job["turns"][0]["turn_id"] for job in writer.jobs] == ["U1"]
+
+
+def test_a_turn_that_fails_to_build_leaves_a_rebuild_entry(tmp_path):
+    missing = str(tmp_path / "gone.jsonl")
+    sender = _sender(tmp_path, _Writer())
+
+    sender.handle(_event("Stop", 1.0, session_id="T1", transcript_path=missing, turn_id="U1"))
+    _finish(sender)
+
+    [line] = (tmp_path / "dlq.jsonl").read_text().splitlines()
+    entry = json.loads(line)
+    assert (entry["key"], entry["error_code"]) == ("rebuild:codex:T1", "FileNotFoundError")
+    assert (entry["rebuild"]["transcript"], entry["rebuild"]["final"]) == (missing, False)

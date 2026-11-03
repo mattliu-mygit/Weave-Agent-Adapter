@@ -1,6 +1,7 @@
 """`weave-agent-adapter evaluations setup|replay|log-transcript` against a fake CES and GraphQL."""
 from __future__ import annotations
 
+import dataclasses
 import itertools
 import json
 import os
@@ -8,6 +9,7 @@ import os
 import pytest
 
 from weave_agent_adapter import ces_writer, cli, config, diagnostics, dlq, records
+from weave_agent_adapter.records import TurnContext
 from weave_agent_adapter.session_sender import SessionSender
 from http_fake import FakeCes
 import codex_transcripts as ct
@@ -258,3 +260,20 @@ def test_status_reports_the_turns_waiting_in_the_dead_letter_file(tmp_path, monk
     status = json.loads(capsys.readouterr().out)
     assert (status["turns_waiting"], status["error_codes"]) == (2, {"unavailable": 2})
     assert status["oldest_failure"].startswith("2027-01-15T08:00:00")
+
+
+def test_replay_rebuilds_a_session_whose_turns_failed_to_build(env, tmp_path):
+    fake, cfg, _ = env
+    config.save_evaluations_state({"project": "wandb/matt-test", "name": "agent-sessions",
+                                   "scope_ref": "UHJvamVjdDox", "dataset_id": "ds-1"})
+    transcript = ct.write(tmp_path / "t.jsonl", ct.exec_turn())
+    ctx = dataclasses.asdict(TurnContext("codex", "T1", "default", "agent_session", "1.2.3", None))
+    dlq.append(dlq.DEFAULT_PATH, [dlq.rebuild_record(
+        {"transcript": transcript, "agents": [], "ctx": ctx, "final": True}, "ValueError")])
+    _issue_ids(fake)
+
+    assert cli.main(["evaluations", "replay", "--config", cfg]) == 0
+
+    assert [h["Idempotency-Key"] for _, h, _ in fake.requests] == [
+        "session-v1:codex:T1", "session-trajectory-v1:codex:T1", "turn-v1:codex:T1:U1"]
+    assert not os.path.exists(dlq.DEFAULT_PATH)

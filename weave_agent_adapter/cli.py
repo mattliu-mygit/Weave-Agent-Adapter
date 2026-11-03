@@ -229,6 +229,7 @@ def _evaluations_status(path: str) -> int:
         "turns_waiting": len(entries),
         "oldest_failure": None if oldest is None else datetime.fromtimestamp(oldest, timezone.utc).isoformat(),
         "error_codes": dict(collections.Counter(str(e.get("error_code")) for e in entries)),
+        "sessions_to_rebuild": len({e.get("key") for e in entries if "rebuild" in e}),
     }, indent=2))
     return 0
 
@@ -240,6 +241,7 @@ def cmd_evaluations(args) -> int:
     from .ces import CesClient, CesError, api_key_for, project_internal_id
     from .ces_writer import CesWriter
     from .config import load_config, load_evaluations_state, save_evaluations_state
+    from .redact import Redactor
 
     if args.action == "status":
         return _evaluations_status(dlq.DEFAULT_PATH)
@@ -271,9 +273,9 @@ def cmd_evaluations(args) -> int:
         if args.action == "log-transcript":
             return _log_transcript(args, cfg, client, state)
         writer = CesWriter(client, state["scope_ref"], state["dataset_id"], rollout_context=ev.rollout_context)
+        redactor = Redactor(deny_keys=cfg.redact_keys, enabled=cfg.redact_enabled)
         try:
-            # A replayed job has no later job to retry a waiting subagent, so it stays dead-lettered.
-            result = dlq.replay(dlq.DEFAULT_PATH, lambda entry: writer.write_turn(entry["job"], final=True))
+            result = dlq.replay(dlq.DEFAULT_PATH, lambda entry: _replay_entry(writer, entry, redactor))
         except dlq.ReplayInProgress as exc:
             print(exc, file=sys.stderr)
             return 1
@@ -285,6 +287,27 @@ def cmd_evaluations(args) -> int:
     except CesError as exc:
         print(f"evaluations {args.action} failed: {exc}", file=sys.stderr)
         return 1
+
+
+def _replay_entry(writer, entry: dict, redactor) -> None:
+    """Resend one dead-letter entry. A replayed job has no later job to retry a waiting
+    subagent, so its write is final and such a subagent keeps the entry dead-lettered."""
+    from . import records
+    from .session_sender import READERS, transcript_jobs
+
+    rebuild = entry.get("rebuild")
+    if rebuild is None:
+        writer.write_turn(entry["job"], final=True)
+        return
+    ctx = records.TurnContext(**rebuild["ctx"])
+    reader = READERS[ctx.harness]
+    written = writer.written_turns(ctx.harness, ctx.session_id)
+    jobs = transcript_jobs(reader, reader.load(rebuild["transcript"]), ctx, redactor,
+                           agents=rebuild["agents"], final=rebuild["final"])
+    for _, job in jobs:
+        turns = [turn for turn in job["turns"] if turn["turn_id"] not in written]
+        if turns:
+            writer.write_turn({**job, "turns": turns}, final=True)
 
 
 def _log_transcript(args, cfg, client, state) -> int:

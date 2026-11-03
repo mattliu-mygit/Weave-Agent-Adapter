@@ -1,6 +1,8 @@
 """Dead-letter file for CES turn jobs that failed, and their replay.
 
-One JSON object per line, each holding a whole turn job (format v2). Replay
+One JSON object per line, each holding a whole turn job (format v2), or, when a
+session's turns failed to build from its transcript, what replay needs to build
+them again (`rebuild`). Replay
 reruns `CesWriter.write_turn` from the top: requests that already finished
 replay with their original IDs, because each has the same key and body. The file holds redacted payload values, so it is
 created user-only. Replay first renames the file, so the sidecar keeps appending
@@ -27,6 +29,14 @@ def record(job: dict, key: str, status, error_code, attempts: int) -> dict:
     """`key` names the turn, such as `turn-v1:codex:<session>:<turn>`, for reports."""
     return {"v": VERSION, "failed_at": time.time(), "key": key, "job": job, "status": status,
             "error_code": error_code, "attempts": attempts}
+
+
+def rebuild_record(rebuild: dict, error_code: str) -> dict:
+    """A session whose turns failed to build. `rebuild` holds the transcript path, the subagent
+    transcripts known so far, the turn context, and whether the session had ended."""
+    return {"v": VERSION, "failed_at": time.time(), "key": f"rebuild:{rebuild['ctx']['harness']}:"
+            f"{rebuild['ctx']['session_id']}", "rebuild": rebuild, "status": None,
+            "error_code": error_code, "attempts": 1}
 
 
 def append(dlq_path: str, entries: list) -> None:
@@ -80,7 +90,8 @@ def _take(dlq_path: str) -> tuple:
                 entry = json.loads(line.decode("utf-8"))
             except ValueError:                  # includes UnicodeDecodeError
                 entry = None
-            if isinstance(entry, dict) and isinstance(entry.get("job"), dict):
+            if isinstance(entry, dict) and (isinstance(entry.get("job"), dict)
+                                            or isinstance(entry.get("rebuild"), dict)):
                 entries.append(entry)
             else:
                 corrupt.append(line if line.endswith(b"\n") else line + b"\n")
