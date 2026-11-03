@@ -86,3 +86,30 @@ def test_only_a_harness_without_a_transcript_reader_gets_a_tracer(tmp_path):
     assert sidecar._tracer_for("codex") is None
     assert sidecar._tracer_for("claude-code") is None
     assert sidecar._tracer_for("gemini-cli") is sidecar._tracer_for("gemini-cli")
+
+
+def test_sidecar_handles_spooled_events_oldest_first_and_empties_the_spool(tmp_path, monkeypatch):
+    from weave_agent_adapter import transport
+
+    socket_path = str(tmp_path / "sidecar.sock")
+    for event in ("SessionStart", "Stop"):
+        assert transport.spool({"v": 1, "event": event}, socket_path)
+    sidecar = Sidecar(socket_path)
+    handled = []
+    monkeypatch.setattr(sidecar, "_handle_line", lambda line: handled.append(json.loads(line)["event"]))
+
+    sidecar._drain_spool()
+
+    assert handled == ["SessionStart", "Stop"]
+    assert transport.take_spool(socket_path) == []
+
+
+def test_the_spool_refuses_events_past_its_bound(tmp_path, monkeypatch):
+    from weave_agent_adapter import transport
+
+    socket_path = str(tmp_path / "sidecar.sock")
+    monkeypatch.setattr(transport, "SPOOL_MAX_BYTES", 40)
+
+    assert transport.spool({"event": "a"}, socket_path)
+    assert not transport.spool({"event": "b" * 40}, socket_path)
+    assert len(transport.take_spool(socket_path)) == 1

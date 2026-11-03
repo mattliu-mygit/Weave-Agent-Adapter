@@ -142,12 +142,10 @@ def cmd_hook(args) -> int:
                 _event_cwd(args.harness, args.event, payload)
             ),
         }
-        if not transport.send(event):
-            if _ensure_sidecar():
-                if not transport.send(event):
-                    diagnose("socket_send", harness=args.harness, event=args.event)
-            else:
-                diagnose("sidecar_unavailable", harness=args.harness, event=args.event)
+        if not transport.send(event) and not (_ensure_sidecar() and transport.send(event)):
+            # The sidecar can't take the event now, so it reads it from the spool when it runs.
+            spooled = transport.spool(event)
+            diagnose("event_spooled" if spooled else "spool_full", harness=args.harness, event=args.event)
     except Exception as exc:
         diagnose("hook", harness=args.harness, event=args.event, error=exc)
     return _hook_result(args)

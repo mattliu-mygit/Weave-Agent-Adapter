@@ -146,7 +146,9 @@ While the sidecar is active, its user-only socket and singleton lock live at:
 ~/.weave-agent-adapter/sidecar.sock.lock
 ```
 
-The socket disappears when the sidecar shuts down after its idle timeout.
+The socket disappears when the sidecar shuts down after its idle timeout. An
+event the sidecar can't take, for example while it is still starting, waits in
+`~/.weave-agent-adapter/spool.jsonl` (at most 4 MiB) until the sidecar reads it.
 
 ## Uninstall
 

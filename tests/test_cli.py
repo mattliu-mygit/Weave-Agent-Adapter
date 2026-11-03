@@ -235,3 +235,18 @@ def test_codex_install_prints_profile_declared_trust_step(tmp_path, capsys):
     output = capsys.readouterr().out
     assert "registered codex hooks" in output
     assert "review and trust them with /hooks" in output
+
+
+def test_an_event_the_sidecar_cannot_take_goes_to_the_spool(tmp_path, monkeypatch):
+    socket_path = str(tmp_path / "sidecar.sock")
+    monkeypatch.setattr(cli, "_read_stdin", lambda **_: '{"session_id":"s"}')
+    monkeypatch.setattr(cli.transport, "send", lambda event: False)
+    monkeypatch.setattr(cli, "_ensure_sidecar", lambda: False)
+    real_spool = cli.transport.spool
+    monkeypatch.setattr(cli.transport, "spool", lambda event: real_spool(event, socket_path))
+
+    assert cli.cmd_hook(argparse.Namespace(harness="codex", event="Stop")) == 0
+
+    [line] = cli.transport.take_spool(socket_path)
+    assert json.loads(line)["event"] == "Stop"
+    assert cli.transport.take_spool(socket_path) == []

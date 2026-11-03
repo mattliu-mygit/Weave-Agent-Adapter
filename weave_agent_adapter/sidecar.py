@@ -15,6 +15,7 @@ import socket
 import threading
 import time
 
+from . import transport
 from .model import DEFAULT_TRACE_ROLE, SUPPORTED_WIRE_VERSION, WireEvent, normalize_trace_role
 from .diagnostics import diagnose
 from .profile import load_profile
@@ -124,11 +125,13 @@ class Sidecar:
         srv.settimeout(ACCEPT_TIMEOUT_S)
         self._last = time.time()
         last_sweep = self._last
+        self._drain_spool()
         try:
             while not self._stop.is_set():
                 try:
                     conn, _ = srv.accept()
                 except socket.timeout:
+                    self._drain_spool()
                     now = time.time()
                     if self.can_idle_exit(now):
                         break            # idle: scale to zero
@@ -166,6 +169,15 @@ class Sidecar:
                 os.remove(self.socket_path)
             if self._lock_fd:
                 self._lock_fd.close()
+
+    def _drain_spool(self) -> None:
+        """Handle the events hooks spooled while no sidecar could take them, oldest first."""
+        lines = transport.take_spool(self.socket_path)
+        for line in lines:
+            if line.strip():
+                self._handle_line(line)
+        if lines:
+            self._last = time.time()
 
     def _sweep(self, now: float, ttl: float = None) -> None:
         ttl = self.session_ttl if ttl is None else ttl
