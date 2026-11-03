@@ -129,3 +129,33 @@ def test_a_system_notification_is_not_a_turn_and_a_later_typed_message_steers(tm
     users = [c["input"] for c in turn["cases"] if c["input"]["kind"] == "user_message"]
     assert [(u["text"], u["steering"]) for u in users] == [("first", False), ("also this", True)]
     assert turn["cases"][0]["output"]["turn_steering_count"] == 1
+
+
+def test_a_fork_drops_its_copy_of_the_parents_history(tmp_path):
+    import json as _json
+
+    from weave_agent_adapter import claude_transcript as reader
+    import claude_transcripts as cl
+
+    subagents = tmp_path / "s1" / "subagents"
+    subagents.mkdir(parents=True)
+    parent = [
+        cl.prompt(1000, "p1", "split the work", agent="A"),
+        cl.assistant(2000, "p2", "m1", [cl.tool_use("toolu_F", "Task", {"prompt": "fork"})], agent="A"),
+    ]
+    cl.write(subagents / "agent-A.jsonl", parent)
+    fork_rows = [
+        *[{**row, "agentId": "F"} for row in parent],
+        cl.tool_result(2500, "p3", "toolu_F", "Fork started", agent="F"),
+        cl.assistant(3000, "f1", "m2", [cl.text("forked work")], stop_reason="end_turn", agent="F"),
+    ]
+    cl.write(subagents / "agent-F.jsonl", fork_rows)
+    (subagents / "agent-F.meta.json").write_text(
+        _json.dumps({"isFork": True, "toolUseId": "toolu_F", "parentAgentId": "A"})
+    )
+
+    fork = reader.load(str(subagents / "agent-F.jsonl"))
+
+    assert [row["uuid"] for row in fork.rows] == ["f1"]
+    assert reader.turn_ends(fork) == [("f1", "completed")]
+    assert reader.parent_thread_id(fork) == "A"

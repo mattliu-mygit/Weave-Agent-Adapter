@@ -54,6 +54,12 @@ def load(path: str) -> Transcript:
     if os.path.exists(meta_path):
         with open(meta_path, encoding="utf-8") as fh:
             meta = json.load(fh)
+    # A fork's file starts with a copy of its parent's history, parent uuids included, through the
+    # Task call that started the fork and that call's result. Those rows are the parent's.
+    call = meta.get("toolUseId")
+    inherited = next((i for i, row in enumerate(rows) if call and _answers(row, call)), None)
+    if inherited is not None:
+        rows = rows[inherited + 1:]
     agent_id = None
     if meta or os.path.basename(os.path.dirname(path)) == "subagents":
         agent_id = next((r["agentId"] for r in rows if r.get("agentId")), None) or \
@@ -61,17 +67,32 @@ def load(path: str) -> Transcript:
     return Transcript(path, rows, meta, agent_id)
 
 
+def _answers(row: dict, call: str) -> bool:
+    content = (row.get("message") or {}).get("content")
+    return isinstance(content, list) and any(
+        isinstance(block, dict) and block.get("type") == "tool_result" and block.get("tool_use_id") == call
+        for block in content)
+
+
 def _subagents_dir(t: Transcript) -> str:
-    if t.agent_id is not None:
-        return os.path.dirname(t.path)
-    return os.path.join(t.path[:-len(".jsonl")], "subagents")
+    """The session's subagents directory. Workflow agents live in subdirectories of it."""
+    if t.agent_id is None:
+        return os.path.join(t.path[:-len(".jsonl")], "subagents")
+    path = os.path.dirname(t.path)
+    while os.path.basename(path) != "subagents" and os.path.dirname(path) != path:
+        path = os.path.dirname(path)
+    return path if os.path.basename(path) == "subagents" else os.path.dirname(t.path)
+
+
+def _agent_files(t: Transcript, pattern: str) -> list:
+    return sorted(glob.glob(os.path.join(_subagents_dir(t), "**", pattern), recursive=True))
 
 
 def subagent_paths(t: Transcript) -> list:
     """Every subagent file of this session, so a parent turn's job can carry their turns."""
     if t.agent_id is not None:
         return []
-    return sorted(glob.glob(os.path.join(_subagents_dir(t), "agent-*.jsonl")))
+    return _agent_files(t, "agent-*.jsonl")
 
 
 def thread_id(t: Transcript):
@@ -82,8 +103,10 @@ def parent_thread_id(t: Transcript):
     """The agent whose Task call started this one, or the session for a top-level subagent."""
     if t.agent_id is None:
         return None
+    if t.meta.get("parentAgentId"):
+        return t.meta["parentAgentId"]
     call = t.meta.get("toolUseId")
-    for path in glob.glob(os.path.join(_subagents_dir(t), "agent-*.jsonl")):
+    for path in _agent_files(t, "agent-*.jsonl"):
         if path == t.path or not call:
             continue
         with open(path, encoding="utf-8", errors="replace") as fh:
@@ -142,7 +165,10 @@ def _end(t: Transcript, rows: list) -> str | None:
 
 
 def _starts(t: Transcript) -> list:
-    return [i for i, row in enumerate(t.rows) if _is_prompt(t, row)]
+    starts = [i for i, row in enumerate(t.rows) if _is_prompt(t, row)]
+    if t.agent_id is not None and t.rows and starts[:1] != [0]:
+        starts.insert(0, 0)       # a fork starts working without a prompt of its own
+    return starts
 
 
 def turn_ends(t: Transcript) -> list:
@@ -193,7 +219,7 @@ def _decision(facts: ToolFacts | None, result_row: dict | None) -> str | None:
 def _spawned_by(t: Transcript) -> dict:
     """Task tool_use id -> the subagent it started, from the subagent meta files."""
     spawned = {}
-    for path in glob.glob(os.path.join(_subagents_dir(t), "agent-*.meta.json")):
+    for path in _agent_files(t, "agent-*.meta.json"):
         try:
             with open(path, encoding="utf-8") as fh:
                 call = json.load(fh).get("toolUseId")

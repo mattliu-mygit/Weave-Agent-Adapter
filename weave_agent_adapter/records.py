@@ -173,6 +173,7 @@ def turn(ctx: TurnContext, *, turn_id, turn_index, agent_id, parent_agent_id, co
         cases.append({"input": {k: redactor.scrub(v) for k, v in case_input.items()},
                       "output": {k: redactor.scrub(v) for k, v in case_output.items()}})
         for spawned in s["spawns"]:
-            spawns.setdefault(spawned, index)
+            if spawned != agent_id:       # a transcript can't launch the agent it belongs to
+                spawns.setdefault(spawned, index)
     return {"agent_id": agent_id, "parent_agent_id": parent_agent_id, "turn_id": turn_id,
             "cases": cases, "spawns": spawns}
