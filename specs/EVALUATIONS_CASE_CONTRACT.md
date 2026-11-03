@@ -74,4 +74,6 @@ project = "entity/project"      # required
 
 `weave-agent-adapter evaluations setup` resolves the project's `scope_ref` through GraphQL, creates the Dataset (key `dataset-v1:{project}:{name}`), declares the fields, and writes `{project, name, scope_ref, dataset_id}` to `~/.weave-agent-adapter/evaluations.json`. The sidecar sends nothing until that file matches the config.
 
+`weave-agent-adapter evaluations log-transcript --harness <codex|claude-code> --file <path> [--dataset <name>]` logs one finished session from its transcript file, outside the hooks. It creates the named Dataset (default `ab-arms`, same key scheme) and declares its fields, then writes every turn as final, the way the idle sweep does, with finished subagent turns on the last one. Its session files live under the Dataset's ID, apart from the live sessions'. It prints `{session_case_id, session_trajectory_id}`. Monopole uses it to log each A/B verification arm.
+
 Codex and Claude Code have transcript readers. Claude Code turns run from one user prompt to the next, its assistant rows merge by `message.id`, and a subagent file's `.meta.json` `toolUseId` names the Task call its Trajectory starts from. Gemini CLI events are ignored until its reader lands.

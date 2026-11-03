@@ -1,7 +1,8 @@
-"""`weave-agent-adapter evaluations setup|replay` against a fake CES and GraphQL."""
+"""`weave-agent-adapter evaluations setup|replay|log-transcript` against a fake CES and GraphQL."""
 from __future__ import annotations
 
 import itertools
+import json
 import os
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from weave_agent_adapter import ces_writer, cli, config, diagnostics, dlq, records
 from weave_agent_adapter.session_sender import SessionSender
 from http_fake import FakeCes
+import codex_transcripts as ct
 
 SCOPE = "/v1/namespaces/wandb/scopes/UHJvamVjdDox"
 
@@ -67,6 +69,52 @@ def test_setup_needs_an_entity_and_project(env, capsys):
     cfg.write_text(f'[evaluations]\nbase_url = "{fake.url}"\nwandb_base_url = "{fake.url}"\nproject = "bare"\n')
 
     assert cli.main(["evaluations", "setup", "--config", str(cfg)]) == 2
+    assert fake.requests == []
+
+
+def _arms_responder(fake):
+    _issue_ids(fake)
+    issue = fake.respond
+
+    def respond(method, path, headers, body):
+        if path.endswith("/datasets"):
+            return 200, {}, {"dataset_id": "ds-arms"}
+        if path.endswith("/fields"):
+            return 200, {}, {"fields": []}
+        return issue(method, path, headers, body)
+    fake.respond = respond
+
+
+def test_log_transcript_logs_every_turn_to_the_named_dataset(env, capsys, tmp_path):
+    fake, cfg, home = env
+    config.save_evaluations_state({"project": "wandb/matt-test", "name": "agent-sessions",
+                                   "scope_ref": "UHJvamVjdDox", "dataset_id": "ds-1"})
+    transcript = ct.write(tmp_path / "arm.jsonl", ct.interrupted_then_next(thread="ARM"))
+    _arms_responder(fake)
+
+    assert cli.main(["evaluations", "log-transcript", "--harness", "codex", "--file", transcript,
+                     "--config", cfg]) == 0
+
+    dataset, fields, *writes = fake.requests
+    assert dataset[0] == f"{SCOPE}/datasets"
+    assert dataset[1]["Idempotency-Key"] == "dataset-v1:wandb/matt-test:ab-arms"
+    assert dataset[2]["name"] == "ab-arms"
+    assert fields[0] == f"{SCOPE}/datasets/ds-arms/fields"
+    assert {path for path, _, _ in writes} == {
+        f"{SCOPE}/datasets/ds-arms/cases", f"{SCOPE}/datasets/ds-arms/trajectories"}
+    assert [h["Idempotency-Key"] for _, h, _ in writes][:2] == [
+        "session-v1:codex:ARM", "session-trajectory-v1:codex:ARM"]
+    assert len([h for _, h, _ in writes if h["Idempotency-Key"].startswith("turn-v1:codex:ARM:")]) == 2
+    assert json.loads(capsys.readouterr().out) == {"session_case_id": "case-1", "session_trajectory_id": "traj-2"}
+    assert os.listdir(home / "sessions" / "ds-arms") == ["codex-ARM.json"]
+
+
+def test_log_transcript_needs_a_harness_and_a_file(env):
+    fake, cfg, _ = env
+    config.save_evaluations_state({"project": "wandb/matt-test", "name": "agent-sessions",
+                                   "scope_ref": "UHJvamVjdDox", "dataset_id": "ds-1"})
+
+    assert cli.main(["evaluations", "log-transcript", "--config", cfg]) == 2
     assert fake.requests == []
 
 

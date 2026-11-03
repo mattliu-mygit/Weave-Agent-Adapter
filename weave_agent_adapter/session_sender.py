@@ -208,30 +208,7 @@ class SessionSender:
         return t
 
     def _agent_turns(self, job: _Job, t, reader) -> list:
-        """Finished, unsent subagent turns as ((thread_id, turn_id), job turn), parents first."""
-        loaded = []
-        for path in dict.fromkeys([*job.agents, *reader.subagent_paths(t)]):
-            try:
-                loaded.append(reader.load(path))
-            except (OSError, ValueError) as error:
-                diagnose("ces_agent_transcript", harness=job.ctx.harness, error=error)
-        parents = {reader.thread_id(a): reader.parent_thread_id(a) for a in loaded}
-
-        def depth(thread, seen=()):
-            parent = parents.get(thread)
-            return 0 if parent not in parents or thread in seen else 1 + depth(parent, (*seen, thread))
-
-        found = []
-        for a in loaded:
-            thread = reader.thread_id(a)
-            for turn_id, end in reader.turn_ends(a):
-                if end is None or (thread, turn_id) in self._sent:
-                    continue
-                turn = reader.select_turn(a, turn_id)
-                found.append((depth(thread), records.ms(turn.rows[0].get("timestamp")) or 0, (thread, turn_id),
-                              reader.turn_records(a, turn, job.facts, job.ctx, self.redactor)))
-        found.sort(key=lambda f: (f[0], f[1]))
-        return [(key, turn) for _, _, key, turn in found]
+        return agent_turns(reader, t, job.agents, job.facts, job.ctx, self.redactor, self._sent)
 
     def _process(self, job: _Job) -> None:
         reader = READERS[job.ctx.harness]
@@ -271,3 +248,50 @@ class SessionSender:
         finally:
             with self._lock:
                 self._inflight = None
+
+
+def agent_turns(reader, t, paths, facts, ctx, redactor, sent=frozenset()) -> list:
+    """Finished, unsent subagent turns as ((thread_id, turn_id), job turn), parents first."""
+    loaded = []
+    for path in dict.fromkeys([*paths, *reader.subagent_paths(t)]):
+        try:
+            loaded.append(reader.load(path))
+        except (OSError, ValueError) as error:
+            diagnose("ces_agent_transcript", harness=ctx.harness, error=error)
+    parents = {reader.thread_id(a): reader.parent_thread_id(a) for a in loaded}
+
+    def depth(thread, seen=()):
+        parent = parents.get(thread)
+        return 0 if parent not in parents or thread in seen else 1 + depth(parent, (*seen, thread))
+
+    found = []
+    for a in loaded:
+        thread = reader.thread_id(a)
+        for turn_id, end in reader.turn_ends(a):
+            if end is None or (thread, turn_id) in sent:
+                continue
+            turn = reader.select_turn(a, turn_id)
+            found.append((depth(thread), records.ms(turn.rows[0].get("timestamp")) or 0, (thread, turn_id),
+                          reader.turn_records(a, turn, facts, ctx, redactor)))
+    found.sort(key=lambda f: (f[0], f[1]))
+    return [(key, turn) for _, _, key, turn in found]
+
+
+def transcript_jobs(reader, t, ctx: TurnContext, redactor) -> list:
+    """Every turn of a finished session's loaded transcript as (key, job), oldest first.
+
+    The session is over, so every turn is final, as in the idle sweep. Finished
+    subagent turns ride on the last turn's job."""
+    turn_ids = [turn_id for turn_id, _ in reader.turn_ends(t)]
+    if not turn_ids:
+        return []
+    session_case = reader.session_case(t, reader.select_turn(t, turn_ids[0]), ctx)
+    jobs = []
+    for number, turn_id in enumerate(turn_ids):
+        turns = [reader.turn_records(t, reader.select_turn(t, turn_id), {}, ctx, redactor)]
+        if number == len(turn_ids) - 1:
+            turns += [turn for _, turn in agent_turns(reader, t, [], {}, ctx, redactor)]
+        body = {"harness": ctx.harness, "session_id": ctx.session_id, "session_case": session_case,
+                "turns": turns}
+        jobs.append((f"turn-v1:{ctx.harness}:{ctx.session_id}:{turn_id}", body))
+    return jobs

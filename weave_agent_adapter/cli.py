@@ -2,7 +2,7 @@
 
     weave-agent-adapter hook --harness <name> --event <event>   # per hook event
     weave-agent-adapter sidecar [--project ...] [--debug-file ...]
-    weave-agent-adapter evaluations setup|replay                   # CES session Cases
+    weave-agent-adapter evaluations setup|replay|log-transcript    # CES session Cases
 
 The hook lazily spawns the sidecar the first time the socket is unreachable, so
 running is zero-touch: the session-start event brings the sidecar up.
@@ -246,7 +246,8 @@ def cmd_evaluations(args) -> int:
     from .ces_writer import CesWriter
     from .config import load_config, load_evaluations_state, save_evaluations_state
 
-    ev = load_config(args.config).evaluations
+    cfg = load_config(args.config)
+    ev = cfg.evaluations
     try:
         api_key = api_key_for(ev.wandb_base_url)
         client = CesClient(ev.base_url, api_key)
@@ -270,6 +271,8 @@ def cmd_evaluations(args) -> int:
         if not state:
             print("run `weave-agent-adapter evaluations setup` first", file=sys.stderr)
             return 2
+        if args.action == "log-transcript":
+            return _log_transcript(args, cfg, client, state)
         writer = CesWriter(client, state["scope_ref"], state["dataset_id"], rollout_context=ev.rollout_context)
         try:
             result = dlq.replay(dlq.DEFAULT_PATH, lambda entry: writer.write_turn(entry["job"]))
@@ -284,6 +287,41 @@ def cmd_evaluations(args) -> int:
     except CesError as exc:
         print(f"evaluations {args.action} failed: {exc}", file=sys.stderr)
         return 1
+
+
+def _log_transcript(args, cfg, client, state) -> int:
+    """Log one finished session transcript to a named Dataset and print its session IDs."""
+    import urllib.parse
+
+    from . import __version__, records
+    from .ces_writer import DEFAULT_STATE_DIR, CesWriter
+    from .redact import Redactor
+    from .session_sender import READERS, transcript_jobs
+
+    if not args.harness or not args.file:
+        print("log-transcript needs --harness and --file", file=sys.stderr)
+        return 2
+    reader = READERS[args.harness]
+    t = reader.load(args.file)
+    ctx = records.TurnContext(harness=args.harness, session_id=reader.thread_id(t), permission_mode=None,
+                              adapter_version=__version__)
+    jobs = transcript_jobs(reader, t, ctx, Redactor(deny_keys=cfg.redact_keys, enabled=cfg.redact_enabled))
+    if not jobs:
+        print(f"{args.file} has no turns", file=sys.stderr)
+        return 1
+    scope = f"/v1/namespaces/wandb/scopes/{urllib.parse.quote(state['scope_ref'], safe='')}"
+    dataset = client.post(f"{scope}/datasets",
+                          {"name": args.dataset, "attributes": {"source": "weave-agent-adapter"}},
+                          f"dataset-v1:{state['project']}:{args.dataset}")
+    dataset_id = dataset["dataset_id"]
+    client.post(f"{scope}/datasets/{dataset_id}/fields", {"fields": records.fields()})
+    # Each Dataset keeps its own session files, so a session logged here never reuses a live one's IDs.
+    writer = CesWriter(client, state["scope_ref"], dataset_id, state_dir=os.path.join(DEFAULT_STATE_DIR, dataset_id),
+                       rollout_context=cfg.evaluations.rollout_context)
+    for _, job in jobs:
+        writer.write_turn(job)
+    print(json.dumps(writer.session_ids(args.harness, ctx.session_id)))
+    return 0
 
 
 def cmd_install(args) -> int:
@@ -325,9 +363,13 @@ def main(argv=None) -> int:
     s.add_argument("--profiles-dir")
     s.set_defaults(fn=cmd_sidecar)
 
-    e = sub.add_parser("evaluations", help="CES session Cases: set up the Dataset, replay the DLQ")
-    e.add_argument("action", choices=("setup", "replay"))
+    e = sub.add_parser("evaluations",
+                       help="CES session Cases: set up the Dataset, replay the DLQ, log a transcript")
+    e.add_argument("action", choices=("setup", "replay", "log-transcript"))
     e.add_argument("--config")
+    e.add_argument("--harness", choices=("codex", "claude-code"))   # log-transcript
+    e.add_argument("--file")                                        # log-transcript: the session transcript
+    e.add_argument("--dataset", default="ab-arms")                  # log-transcript: Dataset name
     e.set_defaults(fn=cmd_evaluations)
 
     for name, fn in (("install", cmd_install), ("uninstall", cmd_uninstall)):
