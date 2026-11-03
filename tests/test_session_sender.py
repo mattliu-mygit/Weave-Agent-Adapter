@@ -76,6 +76,38 @@ def test_a_claude_code_stop_waits_briefly_for_its_turn_to_end(tmp_path):
     assert any(case["output"].get("turn_status") == "completed" for case in job["turns"][0]["cases"])
 
 
+def test_an_idle_sweep_leaves_a_running_last_turn_for_its_stop(tmp_path):
+    path = tmp_path / "s.jsonl"
+    rows = [cl.prompt(1000, "u1", "build it"), cl.assistant(2000, "a1", "m1", [cl.text("building")])]
+    cl.write(path, rows)
+    writer = _Writer()
+    sender = _sender(tmp_path, writer, harnesses=("claude-code",))
+    sender.handle(WireEvent("claude-code", "UserPromptSubmit", 1.0, {"session_id": "S1", "transcript_path": str(path)}))
+    sender.sweep(now=10_000.0, ttl=1.0)
+    while sender.has_active_work():
+        time.sleep(0.01)
+    assert writer.jobs == []
+
+    cl.write(path, [*rows, cl.assistant(3000, "a2", "m2", [cl.text("built")], stop_reason="end_turn")])
+    sender.handle(WireEvent("claude-code", "Stop", 10_001.0, {"session_id": "S1", "transcript_path": str(path)}))
+    _finish(sender)
+
+    [job] = writer.jobs
+    assert any(case["output"].get("turn_status") == "completed" for case in job["turns"][0]["cases"])
+
+
+def test_a_session_end_sends_an_unended_last_turn(tmp_path):
+    path = cl.write(tmp_path / "s.jsonl", [cl.prompt(1000, "u1", "hi"), cl.assistant(2000, "a1", "m1", [cl.text("partial")])])
+    writer = _Writer()
+    sender = _sender(tmp_path, writer, harnesses=("claude-code",))
+
+    sender.handle(WireEvent("claude-code", "SessionEnd", 1.0, {"session_id": "S1", "transcript_path": path}))
+    _finish(sender)
+
+    [job] = writer.jobs
+    assert [turn["turn_id"] for turn in job["turns"]] == ["u1"]
+
+
 class _WrittenWriter(_Writer):
     def written_turns(self, harness, session_id):
         return {"P1", "K1"}

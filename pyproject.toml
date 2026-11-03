@@ -5,13 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "weave-agent-adapter"
 version = "0.1.0"
-description = "Harness-agnostic adapter that traces coding-agent sessions to W&B Weave"
+description = "Harness-agnostic adapter that records coding-agent sessions in CoreWeave Evaluations"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Matt Liu", email = "mattliujhu@gmail.com" }]
-keywords = ["weave", "wandb", "tracing", "observability", "claude-code", "codex", "gemini-cli", "agent", "hooks"]
+keywords = ["wandb", "evaluations", "observability", "claude-code", "codex", "gemini-cli", "agent", "hooks"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

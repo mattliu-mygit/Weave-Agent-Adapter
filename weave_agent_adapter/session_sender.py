@@ -55,7 +55,8 @@ class _Job:
     agents: list
     ctx: TurnContext
     facts: dict
-    sweep: bool = False          # send the last turn only if it was interrupted
+    sweep: bool = False          # the session went idle: send every turn that has ended
+    final: bool = False          # the session ended: an unended last turn is final too
 
 
 class SessionSender:
@@ -110,6 +111,9 @@ class SessionSender:
         elif (wire.event == "Stop" and s.transcript and not p.get("background_tasks")
               and (p.get("turn_id") or wire.harness != "codex")):
             self._enqueue(sid, s, p.get("turn_id"))
+        elif wire.event == "SessionEnd" and s.transcript:
+            self.sessions.pop(sid, None)
+            self._enqueue(sid, s, None, sweep=True, final=True)
 
     def sweep(self, now: float, ttl: float) -> None:
         for sid in [sid for sid, s in self.sessions.items() if now - s.last_activity > ttl]:
@@ -144,7 +148,7 @@ class SessionSender:
             self._queue.put(None)           # so the worker still exits when its write returns
             self._thread.join(5.0)
 
-    def _enqueue(self, sid: str, s: _Session, turn_id, sweep: bool = False) -> None:
+    def _enqueue(self, sid: str, s: _Session, turn_id, sweep: bool = False, final: bool = False) -> None:
         if s.config_version is None and self.config_paths.get(s.harness):
             s.config_version = config_version(self.config_paths[s.harness], cwd=s.cwd)
         ctx = TurnContext(s.harness, sid, s.permission_mode, s.trace_role, self.adapter_version,
@@ -153,7 +157,7 @@ class SessionSender:
                  for k, v in s.tools.items()}
         with self._lock:
             self._pending += 1
-        self._queue.put(_Job(s.transcript, turn_id, list(s.agents), ctx, facts, sweep))
+        self._queue.put(_Job(s.transcript, turn_id, list(s.agents), ctx, facts, sweep, final))
 
     # ------- worker thread -------
 
@@ -179,9 +183,14 @@ class SessionSender:
         thread_id = reader.thread_id(t)
         written = self.writer.written_turns(job.ctx.harness, job.ctx.session_id)
         if job.sweep:
-            # The session went idle, so every turn is final. This sends a last turn that was
-            # interrupted, or whose Stop came while background tasks still ran.
-            target = ids[-1] if ids else None
+            # Send every turn that has ended, such as one that was interrupted or whose Stop
+            # came while background tasks still ran. A turn followed by another has ended. An
+            # unended last turn may still be running a long tool call, and sending it now would
+            # freeze it as incomplete under its only key, so it waits for its Stop unless the
+            # session ended.
+            last_open = bool(ends) and ends[-1][1] is None and not job.final
+            sendable = ids[:-1] if last_open else ids
+            target = sendable[-1] if sendable else None
         else:
             target = job.turn_id or (ids[-1] if ids else None)
             if target not in ids:
@@ -222,8 +231,14 @@ class SessionSender:
         agents = self._agent_turns(job, t, reader)
         if not pending and not agents:
             return
-        first = reader.select_turn(t, reader.turn_ends(t)[0][0])
+        ends = reader.turn_ends(t)
+        if not ends:
+            diagnose("ces_turn_missing", harness=job.ctx.harness)
+            return
+        first = reader.select_turn(t, ends[0][0])
         session_case = reader.session_case(t, first, job.ctx)
+        session_case = {**session_case,
+                        "input": {k: self.redactor.scrub(v) for k, v in session_case["input"].items()}}
         prefix = {"harness": job.ctx.harness, "session_id": job.ctx.session_id, "session_case": session_case}
         for number, turn_id in enumerate(pending):
             turn = reader.select_turn(t, turn_id)

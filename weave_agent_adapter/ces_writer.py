@@ -86,8 +86,8 @@ class CesWriter:
                     raise
                 diagnose("ces_already_stored", harness=harness)
                 result = None
-            for spawned, index in turn["spawns"].items() if result else ():
-                state["agent_roots"].setdefault(spawned, result["case_ids"][index])
+            for spawned, index in turn["spawns"].items() if result is not None else ():
+                state["agent_roots"].setdefault(spawned, result.get("case_ids", [])[index])
             state["turns"].append(turn["turn_id"])
             self._save(harness, sid, state)
 

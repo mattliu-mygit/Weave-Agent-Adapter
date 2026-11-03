@@ -1,9 +1,8 @@
 """Scrub likely secrets before values leave the sidecar.
 
 Two rules: (1) if a dict key looks sensitive, drop the whole value; (2) scrub
-secret-shaped substrings inside any string. Applied in the tracer, so every output
-(Weave, debug, …) receives already-redacted data. Best-effort, not a guarantee , 
-tune the denylist/patterns for your environment.
+secret-shaped substrings inside any string. Applied before a value leaves for CES.
+Best-effort, not a guarantee; tune the denylist/patterns for your environment.
 """
 from __future__ import annotations
 

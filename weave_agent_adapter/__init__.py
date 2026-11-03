@@ -1,4 +1,4 @@
-"""Harness-neutral Weave agent tracing for coding-agent sessions."""
+"""Harness-neutral recording of coding-agent sessions in CoreWeave Evaluations."""
 
 from importlib import metadata
 

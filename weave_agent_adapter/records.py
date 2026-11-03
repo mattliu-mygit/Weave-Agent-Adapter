@@ -97,7 +97,10 @@ def fields() -> list:
 def ms(timestamp) -> int | None:
     if not isinstance(timestamp, str):
         return None
-    moment = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    try:
+        moment = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None  # one unreadable timestamp must not keep the turn, or the session, from CES
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
     return (moment - _EPOCH) // timedelta(milliseconds=1)

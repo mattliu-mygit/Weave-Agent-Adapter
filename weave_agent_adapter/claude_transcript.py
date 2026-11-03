@@ -149,7 +149,7 @@ def turn_ends(t: Transcript) -> list:
     """(turn_id, "completed" | "aborted" | None) for this file's turns, in order."""
     starts = _starts(t)
     bounds = zip(starts, [*starts[1:], len(t.rows)])
-    return [(t.rows[i].get("uuid"), _end(t, t.rows[i:j])) for i, j in bounds]
+    return [(t.rows[i]["uuid"], _end(t, t.rows[i:j])) for i, j in bounds if t.rows[i].get("uuid")]
 
 
 def select_turn(t: Transcript, turn_id: str) -> TurnRecords | None:
