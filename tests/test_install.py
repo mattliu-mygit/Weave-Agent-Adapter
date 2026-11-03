@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from weave_agent_adapter.install import install, uninstall
+from weave_agent_adapter.install import MARKERS, install, uninstall
 
 
 def _read(p):
@@ -41,7 +41,7 @@ def test_install_preserves_foreign_hooks(tmp_path):
     install("claude-code", path=path)
     cmds = [h["command"] for e in _read(path)["hooks"]["PreToolUse"] for h in e["hooks"]]
     assert "someone-elses-hook" in cmds                # foreign entry kept
-    assert any("weave-agent-adapter" in c for c in cmds)
+    assert any(marker in c for c in cmds for marker in MARKERS)
 
 
 def test_uninstall_removes_only_ours(tmp_path):
