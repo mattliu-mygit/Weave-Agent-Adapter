@@ -49,9 +49,6 @@ source     = "transcript_root"             # conversation id = first message's i
 skip_field = "isSidechain"                 # skip subagent rows when finding the root
 id_key     = "uuid"                        # the row field to use as the conversation id
 
-[enrich]
-source = "claude-transcript"               # per-LLM-call chat spans + token usage from the transcript
-
 [config_surface]
 # Deliberately-edited context artifacts that shape agent behavior, hashed into
 # weave_agent_adapter.config_version — the A/B cohort key for evaluating

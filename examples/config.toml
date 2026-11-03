@@ -1,18 +1,18 @@
 # Example weave-agent-adapter config, read by the sidecar (env > this file > defaults).
 # Copy to ~/.weave-agent-adapter/config.toml and edit. The hook needs no config.
 
-[weave]
-entity  = "your-entity"
-project = "claude-code"                # default project (also the fallback when a session has no cwd)
-project_per_repo = false               # true: trace each repo to its own project (named after the cwd leaf)
-# WANDB_API_KEY is read from the environment, never put secrets in this file.
+[evaluations]
+enabled  = true
+project  = "your-entity/your-project"  # the W&B project whose CES Dataset holds the sessions
+name     = "agent-sessions"            # the Dataset; run `weave-agent-adapter evaluations setup` after changing it
+# CES reads the W&B API key from ~/.netrc; never put secrets in this file.
 
 [redaction]
 enabled     = true                     # scrub secrets before sending (default true)
 redact_keys = ["api_key", "authorization", "token", "password"]  # extra deny keys; omit for defaults
 
 [sampling]
-session_rate = 1.0                     # fraction of sessions traced
+session_rate = 1.0                     # fraction of sessions sent to CES
 
 [sidecar]
 idle_shutdown_s = 120                  # exit after this long with no active sessions

@@ -30,9 +30,7 @@ Homepage = "https://github.com/mattliu-mygit/Weave-Agent-Adapter"
 Repository = "https://github.com/mattliu-mygit/Weave-Agent-Adapter"
 Issues = "https://github.com/mattliu-mygit/Weave-Agent-Adapter/issues"
 
-# The hook path is stdlib-only; only the sidecar needs dependencies.
 [project.optional-dependencies]
-sidecar = ["weave>=0.53.1"]
 dev = ["pytest>=7"]
 
 [project.scripts]

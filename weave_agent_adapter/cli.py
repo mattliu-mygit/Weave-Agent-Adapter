@@ -1,7 +1,7 @@
 """Hook dispatcher, sidecar runner, and profile-driven installer CLI.
 
     weave-agent-adapter hook --harness <name> --event <event>   # per hook event
-    weave-agent-adapter sidecar [--project ...] [--debug-file ...]
+    weave-agent-adapter sidecar                                  # receives hook events, sends sessions
     weave-agent-adapter evaluations setup|replay|log-transcript    # CES session Cases
 
 The hook lazily spawns the sidecar the first time the socket is unreachable, so
@@ -82,22 +82,6 @@ def _event_cwd(harness: str, event: str, payload: dict):
         return None
 
 
-def _append_private_jsonl(path: str, record: dict) -> None:
-    """Append one JSON record while keeping the payload-bearing file user-only."""
-    flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
-    if hasattr(os, "O_CLOEXEC"):
-        flags |= os.O_CLOEXEC
-    fd = os.open(path, flags, 0o600)
-    try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "a", encoding="utf-8") as fh:
-            fd = None
-            fh.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
-    finally:
-        if fd is not None:
-            os.close(fd)
-
-
 def _sidecar_up() -> bool:
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
@@ -169,35 +153,20 @@ def cmd_hook(args) -> int:
 
 def cmd_sidecar(args) -> int:
     from .config import load_config
-    from .emit import WeaveTurnEmitter, serializable_payload
     from .redact import Redactor
     from .sidecar import Sidecar
 
     cfg = load_config(args.config)
-    project = args.project or cfg.project
-
-    debug_file = args.debug_file or os.environ.get("WEAVE_AGENT_ADAPTER_DEBUG_FILE")
-    if debug_file:
-        def _to_file(payload, project_id, _path=debug_file):
-            record = {"project": project_id, "turn": serializable_payload(payload)}
-            _append_private_jsonl(_path, record)
-        emitter = WeaveTurnEmitter(emit=_to_file)
-    else:
-        emitter = WeaveTurnEmitter()
-
     redactor = Redactor(deny_keys=cfg.redact_keys, enabled=cfg.redact_enabled)
-    # Debug runs write turns to a local file; they must not send to CES either.
-    session_sender = None if debug_file else _session_sender(cfg, redactor, args.profiles_dir)
-    sc = Sidecar(project, transport.SOCKET_PATH, profiles_dir=args.profiles_dir,
-                 idle_s=cfg.idle_shutdown_s, redactor=redactor, session_rate=cfg.session_rate,
-                 session_ttl=cfg.session_ttl_s, project_per_repo=cfg.project_per_repo,
-                 emitter=emitter, session_sender=session_sender)
+    session_sender = _session_sender(cfg, redactor, args.profiles_dir)
+    sc = Sidecar(transport.SOCKET_PATH, profiles_dir=args.profiles_dir, idle_s=cfg.idle_shutdown_s,
+                 redactor=redactor, session_rate=cfg.session_rate, session_ttl=cfg.session_ttl_s,
+                 session_sender=session_sender)
     signal.signal(signal.SIGTERM, lambda *_: sc.stop())
     signal.signal(signal.SIGINT, lambda *_: sc.stop())
     try:
         sc.serve()
     finally:
-        sc.flush_emitter()
         if session_sender:
             session_sender.close()
     return 0
@@ -231,8 +200,8 @@ def _session_sender(cfg, redactor, profiles_dir=None):
             except Exception:
                 pass                            # fingerprinting must never stop sending
         writer = CesWriter(client, state["scope_ref"], state["dataset_id"], rollout_context=ev.rollout_context)
-        return SessionSender(writer, dlq.DEFAULT_PATH,
-                             redactor, __version__, harnesses=ev.harnesses, config_paths=paths)
+        return SessionSender(writer, dlq.DEFAULT_PATH, redactor, __version__, harnesses=ev.harnesses,
+                             config_paths=paths, session_rate=cfg.session_rate)
     except Exception as exc:
         diagnose("ces_config", error=exc)
         return None
@@ -357,9 +326,7 @@ def main(argv=None) -> int:
     h.set_defaults(fn=cmd_hook)
 
     s = sub.add_parser("sidecar")
-    s.add_argument("--project", default=None)   # falls back to config
     s.add_argument("--config")                  # config.toml path (else default)
-    s.add_argument("--debug-file")              # write the tree to a file instead of Weave
     s.add_argument("--profiles-dir")
     s.set_defaults(fn=cmd_sidecar)
 

@@ -1,28 +1,34 @@
 # weave-agent-adapter
 
 See what your coding agents did and what you allowed them to do.
-`weave-agent-adapter` records agent turns as typed W&B Weave conversations and
-spans for model calls, tools, subagents, approvals, rejections, and mid-turn
-steering. View the resulting traces in Weave Agents or use them with Signals.
+`weave-agent-adapter` records each finished agent turn in the CoreWeave
+Evaluations service (CES): the user's messages, the assistant's replies, every
+tool call with its approval or rejection, compactions, and subagent runs.
+[Monopole](https://github.com/mattliu-mygit/Monopole) scores and judges the
+sessions it records.
 
 It attaches through external command hooks: no harness source changes, no
 in-process SDK, and no synchronous network work on the hook path. Claude Code,
-Codex, and Gemini CLI profiles ship with the package.
+Codex, and Gemini CLI profiles ship with the package. Claude Code and Codex
+sessions reach CES; Gemini CLI sessions don't yet.
 
 ## What gets recorded
 
 ```text
-invoke_agent claude-code  "add logging" -> "done"
-├── chat claude-opus-4    1.2k input / 80 output tokens
-├── execute_tool Bash     approved
-├── execute_tool Edit     rejected: "use the logger"
-├── invoke_agent Explore  agent_id=a1
-└── execute_tool Read     agent_id=a1
+claude-code session 7f3c…            a session Trajectory
+├── session                          its session Case
+├── user_message       "add logging"
+├── assistant_message  1.2k input / 80 output tokens
+├── tool_call Bash     approved
+├── tool_call Edit     rejected: "use the logger"
+├── tool_call Task     roots a subagent's own Trajectory
+└── assistant_message  "done"
 ```
 
-Each completed turn is logged once with `weave.log_turn` as a typed Turn span
-in its own trace. Stable thread identifiers connect turns and forked or resumed
-sessions into Weave conversations.
+Each finished turn is written once, in order, under keys built from its
+content, so a sidecar restart or a replay never duplicates it.
+[specs/EVALUATIONS_CASE_CONTRACT.md](specs/EVALUATIONS_CASE_CONTRACT.md) has the
+layout, the field contract, and the write order.
 
 ## Quickstart
 
@@ -31,15 +37,16 @@ sessions into Weave conversations.
 You need:
 
 - Python 3.10 or newer;
-- a [Weights & Biases account](https://wandb.ai/);
-- Claude Code, Codex, or Gemini CLI.
+- a [Weights & Biases account](https://wandb.ai/) with a project to hold the
+  sessions;
+- Claude Code or Codex.
 
 The examples below use a POSIX shell on macOS or Linux.
 
 ### 1. Install
 
 Choose either the published package or a source checkout. Both use a virtual
-environment so the adapter and its sidecar dependencies stay isolated.
+environment so the adapter stays isolated.
 
 #### From PyPI
 
@@ -47,7 +54,7 @@ environment so the adapter and its sidecar dependencies stay isolated.
 python3 -m venv ~/.venvs/weave-agent-adapter
 source ~/.venvs/weave-agent-adapter/bin/activate
 python -m pip install --upgrade pip
-python -m pip install "weave-agent-adapter[sidecar]"
+python -m pip install weave-agent-adapter
 ```
 
 If the first release is not yet available from your package index, use the
@@ -61,7 +68,7 @@ cd Weave-Agent-Adapter
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[sidecar]"
+python -m pip install -e .
 ```
 
 Keep the environment active through hook registration. The installer records
@@ -71,33 +78,30 @@ that environment.
 
 ### 2. Authenticate with W&B
 
-Use an existing authenticated W&B environment or export an API key before
-starting your coding harness:
-
-```bash
-export WANDB_API_KEY="..."
-```
-
-If you already use the W&B CLI, credentials saved by `wandb login` work too.
+CES authorizes the adapter with the W&B API key that `~/.netrc` holds for the
+W&B host, which `wandb login` writes. The adapter never reads `WANDB_API_KEY`.
 Never put the API key in the adapter configuration file.
 
-### 3. Choose a Weave project
+### 3. Choose a project and set up its Dataset
 
-Create the configuration directory:
-
-```bash
-mkdir -p ~/.weave-agent-adapter
-```
-
-Then create `~/.weave-agent-adapter/config.toml`:
+Create `~/.weave-agent-adapter/config.toml`:
 
 ```toml
-[weave]
+[evaluations]
+enabled = true
 project = "my-entity/my-project"
 ```
 
-Replace both names with your W&B entity and project. A bare project name also
-works and uses your authenticated default entity.
+Replace both names with your W&B entity and project, then create the CES
+Dataset that holds the sessions:
+
+```bash
+weave-agent-adapter evaluations setup
+```
+
+Setup declares the Dataset's fields and saves its IDs to
+`~/.weave-agent-adapter/evaluations.json`. The sidecar sends nothing until that
+file matches the configuration.
 
 ### 4. Register one harness
 
@@ -123,14 +127,16 @@ trust prompt.
 
 1. Start a new session in the registered harness.
 2. Complete one normal prompt and response.
-3. Open the configured project in W&B Weave and look for the new agent trace.
+3. Check that the turn reached CES, for example with Monopole's
+   `weave-agent-signals inspect --recent 1`.
 
-Export is asynchronous and best-effort, so a trace may take a moment to appear.
-On a healthy run the diagnostic log may be empty. If no trace arrives, inspect
-the metadata-only log:
+A turn is sent in the background once it ends. On a healthy run the diagnostic
+log may be empty. If the turn doesn't arrive, inspect the metadata-only log and
+the dead-letter file:
 
 ```bash
 tail -n 50 ~/.weave-agent-adapter/adapter.log
+cat ~/.weave-agent-adapter/evaluations-dlq.jsonl
 ```
 
 While the sidecar is active, its user-only socket and singleton lock live at:
@@ -140,9 +146,7 @@ While the sidecar is active, its user-only socket and singleton lock live at:
 ~/.weave-agent-adapter/sidecar.sock.lock
 ```
 
-The socket disappears when the sidecar shuts down after its idle timeout. If
-you authenticated with `WANDB_API_KEY`, make sure the variable is present in
-the environment that launches the coding harness.
+The socket disappears when the sidecar shuts down after its idle timeout.
 
 ## Uninstall
 
@@ -161,22 +165,16 @@ diagnostics.
 
 ## Harness support
 
-Claude Code, Codex, and Gemini CLI expose different hook data. Missing optional
-lifecycle events and metadata degrade by omission rather than breaking the
-trace.
+Claude Code and Codex sessions are read from their transcripts, and the hooks
+add what the transcripts lack: permission prompts, the permission mode, and
+subagent transcript paths. Missing optional hook data degrades by omission.
 
-Gemini CLI captures sessions, turns, model selection, tools, final responses,
-and compaction through its stable non-streaming hooks. Permissions, subagents,
-transcript enrichment, and configuration fingerprinting are omitted because
-that profile has no reliable source for them.
+Gemini CLI's hooks register, and the sidecar builds its turns from hook events,
+but those turns aren't sent to CES yet, because Gemini's transcript format is
+unverified.
 
 Claude Code's `PermissionDenied` hook covers auto-mode classifier denials, not
 denials made in the manual permission dialog.
-
-Codex adds best-effort transcript enrichment for intermediate assistant
-messages, public reasoning summaries, model-call usage, and model names. If
-those native details are unavailable, the final turn-end reply is still
-emitted as a fallback LLM child.
 
 ## Runtime and privacy
 
@@ -185,14 +183,11 @@ always exit zero without making permission decisions. They use empty stdout by
 default and may return an empty JSON object when the harness requires a JSON
 acknowledgment.
 
-The first event starts a singleton sidecar, which normalizes events, redacts
-values, builds the turn, and maps it to public Weave Conversation SDK objects.
-It exits when idle and restarts on demand. A turn-end hook hands the completed
-turn to the emitter immediately and only once.
-
-The Weave SDK owns agent-span routing, asynchronous export, batching, and
-network retry. Delivery is deliberately best-effort: there is no raw capture,
-spool, outbox, replay, or second tracing plane. Local diagnostics contain
+The first event starts a singleton sidecar. When a turn ends, a background
+thread reads the transcript, redacts values, builds the turn's Cases, and writes
+them to CES. A turn that still fails after retries is kept whole in the
+dead-letter file; `weave-agent-adapter evaluations replay` resends it. The
+sidecar exits when idle and restarts on demand. Local diagnostics contain
 metadata only, never payload values or exception messages.
 
 ## Configuration
@@ -200,31 +195,31 @@ metadata only, never payload values or exception messages.
 Environment variables override `~/.weave-agent-adapter/config.toml`.
 
 ```toml
-[weave]
-project = "my-entity/my-project"  # or a bare project using the default entity
-project_per_repo = false          # route to entity/<cwd-leaf> when true
+[evaluations]
+enabled = true
+project = "my-entity/my-project"
+name = "agent-sessions"              # the CES Dataset that holds the sessions
+harnesses = ["claude-code", "codex", "gemini-cli"]
 
 [redaction]
 enabled = true
 redact_keys = ["api_key", "authorization", "token", "password"]
 
 [sampling]
-session_rate = 1.0
+session_rate = 1.0                   # fraction of sessions sent to CES
 
 [sidecar]
 idle_shutdown_s = 120
 session_ttl_s = 3600
 ```
 
-For advanced setups, `WANDB_ENTITY` or `[weave].entity` supplies the entity
-when `project` is bare. `WEAVE_PROJECT` overrides the configured project.
 `WEAVE_AGENT_ADAPTER_DISABLE=1` disables hook forwarding.
 
 ### Workspace trace role
 
-Every trace root carries `weave_agent_signals.trace_role`. Normal coding-agent
-work defaults to `agent_session`. A workspace can persist another role in the
-ignored file `.weave-agent-adapter/trace-role`, containing one of:
+Every Case carries a `trace_role`. Normal coding-agent work defaults to
+`agent_session`. A workspace can persist another role in the ignored file
+`.weave-agent-adapter/trace-role`, containing one of:
 
 - `agent_session`
 - `signal_evaluation`
@@ -249,19 +244,14 @@ The repository-local `.weave-agent-adapter/` directory is ignored by Git. It
 is separate from the user-level `~/.weave-agent-adapter/` directory that holds
 project configuration and diagnostics.
 
-## CES session Cases
-
-The sidecar can also write each finished turn to a CoreWeave Evaluations (CES) Dataset: a session Case, a session Trajectory, and one Case per user message, assistant message, tool call, and compaction. Codex and Claude Code are supported so far.
+## Evaluations commands
 
 ```bash
-# config.toml: [evaluations] enabled = true, project = "entity/project"
 weave-agent-adapter evaluations setup    # create the Dataset, declare its fields, save its IDs
 weave-agent-adapter evaluations replay   # resend turns that failed, from the dead-letter file
 weave-agent-adapter evaluations log-transcript --harness codex --file run.jsonl [--dataset ab-arms]
                                          # log one finished session file; prints its session Case and Trajectory IDs
 ```
-
-See [specs/EVALUATIONS_CASE_CONTRACT.md](specs/EVALUATIONS_CASE_CONTRACT.md) for the layout, field contract, and write order.
 
 ## Add a harness
 
@@ -271,17 +261,19 @@ Copy a profile from
 
 - native event to canonical action mappings;
 - dotted JSON payload fields;
-- optional thread, transcript-enrichment, and configuration-surface behavior;
+- optional thread and configuration-surface behavior;
 - user and local settings paths plus the events to register.
 
 Common fields may be supplemented by event-specific field paths. See the
 [harness profile contract](specs/HARNESS_PROFILES.md) for the supported shape.
+A harness reaches CES once it also has a transcript reader, like
+`codex_transcript.py` and `claude_transcript.py`.
 
 ## Design contracts
 
 - [Product architecture and invariants](specs/DESIGN.md)
 - [Harness profile contract](specs/HARNESS_PROFILES.md)
-- [Weave agent span contract](specs/WEAVE_SPAN_CONTRACT.md)
+- [CES session Case contract](specs/EVALUATIONS_CASE_CONTRACT.md)
 
 ## Development
 
@@ -291,13 +283,10 @@ From a source checkout:
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[sidecar,dev]"
+python -m pip install -e ".[dev]"
 python -m pytest -q
 ```
 
 The suite covers reducer correlation and lifecycle, every registered hook,
-installer safety, privacy, project routing, typed span mapping, and SDK setup.
-
-## License
-
-See [LICENSE](LICENSE).
+installer safety, privacy, the transcript readers, CES writes and retries, and
+the dead-letter file.

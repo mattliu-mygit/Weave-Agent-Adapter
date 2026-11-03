@@ -18,10 +18,9 @@ running match by tool name and compatible input.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 
-from .config import resolve_project
+from .config import session_sampled
 from .config_surface import config_version
 from .model import (
     OTHER_TRACE_ROLE,
@@ -34,35 +33,18 @@ from .model import (
     ToolStatus,
     Turn,
 )
-from .enrich import make_enricher
 from .profile import Profile
 from .redact import Redactor
 
 
 class Tracer:
-    def __init__(self, profile: Profile, project: str, emitter=None,
-                 redactor: Redactor = None, session_rate: float = 1.0,
-                 project_per_repo: bool = False) -> None:
+    def __init__(self, profile: Profile, emitter=None, redactor: Redactor = None,
+                 session_rate: float = 1.0) -> None:
         self.profile = profile
-        self.project = project
         self.emitter = emitter
         self.redactor = redactor or Redactor()
         self.session_rate = session_rate
-        self.project_per_repo = project_per_repo
-        self.enricher = make_enricher(profile.enrich, self.redactor)
         self.sessions: dict[str, Session] = {}
-
-    def _project_for(self, cwd) -> str:
-        return resolve_project(self.project, cwd, self.project_per_repo)
-
-    def _sampled(self, sid: str) -> bool:
-        # deterministic per session_id, so a session is all-in or all-out
-        if self.session_rate >= 1.0:
-            return True
-        if self.session_rate <= 0.0:
-            return False
-        h = int.from_bytes(hashlib.md5(sid.encode()).digest()[:4], "big") / 2 ** 32
-        return h < self.session_rate
 
     def handle(self, wire) -> None:
         canonical = self.profile.canonical_event(wire.event)
@@ -101,11 +83,11 @@ class Tracer:
     # ------- session -------
 
     def _on_session_start(self, sid, f, at) -> None:
-        if sid in self.sessions or not self._sampled(sid):
+        if sid in self.sessions or not session_sampled(sid, self.session_rate):
             return
         cwd = f.get("cwd")
         s = Session(
-            session_id=sid, project=self._project_for(cwd), last_activity=at,
+            session_id=sid, last_activity=at,
             harness=self.profile.name, transcript=f.get("transcript"), cwd=cwd,
             trace_role=f["trace_role"],
         )
@@ -182,11 +164,6 @@ class Tracer:
         if not t or t.ended_at is None:
             return False
         self._thread_of(s)                    # resolve the conversation id once
-        if self.enricher:
-            try:
-                self.enricher.enrich_turn(t, s)   # LLM-call internals from the transcript
-            except Exception:
-                pass
         if self.emitter:
             try:
                 self.emitter.emit_turn(t, s)

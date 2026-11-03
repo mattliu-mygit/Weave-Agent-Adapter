@@ -60,7 +60,6 @@ def test_gemini_profile_omits_unsupported_optional_capabilities():
 
     assert "PermissionRequest" not in profile.events
     assert "SubagentStart" not in profile.events
-    assert profile.enrich == {}
     assert profile.config_surface == {}
     assert profile.registration["command"].endswith("--success-json")
 

@@ -59,9 +59,6 @@ tool_error = "error"
 [event_fields.Stop]
 pending_work = "background_tasks"
 
-[enrich]
-source = "native-transcript-v1"
-
 [registration]
 user_path  = "~/.my-harness/hooks.json"
 local_path = ".my-harness/hooks.json"
@@ -73,23 +70,21 @@ Field values are dotted paths into the native payload. Optional fields are
 simply omitted when unavailable. `[event_fields.<NativeEvent>]` mappings add to
 or override `[fields]` for one native event; they select paths only and cannot
 run conditions, transforms, defaults, or code. Canonical fields currently used
-by the reducer or enrichment path include session, prompt/reply, tool output or
+by the reducer or the session sender include session, prompt/reply, tool output or
 error, permission, subagent identity, transcript, compaction, pending work,
 working-directory, model, permission-mode, turn-ID, and effort data.
 
 Capabilities are optional and additive. Profiles may omit session end,
 explicit tool failure, permissions, subagents, compaction, model metadata,
-transcript enrichment, configuration fingerprinting, or pending-work signals.
-Missing capabilities must not prevent the remaining observed turn from being
-emitted. A truthy `pending_work` on `turn_end` keeps the turn open; a later
+configuration fingerprinting, or pending-work signals. Missing capabilities
+must not prevent the remaining observed turn from being recorded. A truthy `pending_work` on `turn_end` keeps the turn open; a later
 clean `turn_end` closes it, with TTL finalization as fallback.
 
-Optional `[thread]`, `[enrich]`, and `[config_surface]` sections select shipped
-interpretation strategies. Unknown strategy names degrade to no enrichment;
-they do not create dynamic code-loading behavior. Transcript enrichment is
-best-effort and must degrade to the hook-derived turn when a native transcript
-is absent, unreadable, or changes shape. Hooks remain authoritative for
-lifecycle and tool state.
+Optional `[thread]` and `[config_surface]` sections select shipped
+interpretation strategies. Unknown strategy names degrade to no behavior; they
+do not create dynamic code-loading behavior. A harness's sessions reach CES
+through a transcript reader, which is code rather than profile configuration.
+Hooks remain authoritative for the turn boundary and for permission prompts.
 
 ## Registration
 
@@ -117,7 +112,9 @@ prints the note without adding harness-specific installer behavior.
 2. Add the profile under `weave_agent_adapter/profiles/`.
 3. Add reducer integration tests covering the events the harness actually
    emits and installer tests covering its registration path.
-4. Document genuine degradation where the harness lacks an action.
+4. To send its sessions to CES, add a transcript reader and tests that drive a
+   session through it.
+5. Document genuine degradation where the harness lacks an action.
 
 Raw payload capture is not a shipped runtime feature because it conflicts with
 the adapter's privacy boundary.

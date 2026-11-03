@@ -2,19 +2,24 @@
 
 ## Product contract
 
-The adapter observes coding-agent command hooks and sends each completed turn
-to W&B Weave as a typed agent Turn span. It captures prompts, replies, tools,
-subagents, permission decisions, steering, compaction, and available model/token
-details without modifying the harness. Stable conversation IDs make turns
-visible as conversations and eligible for Signals.
+The adapter observes coding-agent command hooks and records each completed turn
+in a CoreWeave Evaluations (CES) Dataset. A session is a Trajectory rooted at
+its session Case. Each turn adds a Case per user message, assistant message,
+tool call, and compaction, carrying permission decisions, steering, and the
+available model and token details. A subagent gets its own Trajectory, rooted
+at the tool call that launched it. Monopole reads these sessions to score and
+judge them.
 
-Tracing is passive. It never approves, rejects, rewrites, or delays an agent
-action beyond a short bounded local handoff. Hook, sidecar, enrichment, and
-export failures never fail the harness.
+Recording is passive. It never approves, rejects, rewrites, or delays an agent
+action beyond a short bounded local handoff. Hook, sidecar, and send failures
+never fail the harness.
 
-Claude Code, Codex, and Gemini CLI ship as declarative profiles. Another
-harness can use the same implementation when it runs a command for lifecycle
-events and passes one JSON object on standard input.
+Claude Code, Codex, and Gemini CLI ship as declarative profiles. Claude Code
+and Codex sessions are read from their transcripts. Gemini CLI's turns are
+built from hook events by the reducer, and they are not sent to CES until its
+transcript format is verified. Another harness can use the same hook path when
+it runs a command for lifecycle events and passes one JSON object on standard
+input.
 
 ## Architecture
 
@@ -22,10 +27,9 @@ events and passes one JSON object on standard input.
 harness command hook
   -> bounded Unix-socket handoff
   -> singleton sidecar
-  -> profile normalization
-  -> session/turn reducer
-  -> public weave.log_turn mapping
-  -> Weave Agents conversations, spans, and Signals
+  -> session sender: hook facts + transcript reader -> one job per finished turn
+  -> CesWriter: session Case, session Trajectory, then the turn's Cases, in order
+  -> CES Dataset
 ```
 
 The hook path is standard-library-only. It stamps the entry time, reads one
@@ -35,43 +39,41 @@ for harnesses that require a JSON acknowledgment. A missing sidecar is started
 once and retried within the same short deadline. No hook performs network I/O
 or writes raw payloads.
 
-The sidecar owns every dependency-bearing operation: profile loading, field
-extraction, redaction, transcript enrichment, state reduction, project
-routing, and export. One sidecar multiplexes harnesses and sessions while
-keeping their reducer state isolated.
+The sidecar owns profile loading, field extraction, redaction, transcript
+reading, and CES writes. One sidecar multiplexes harnesses and sessions. The
+session sender keeps what the transcripts lack, such as permission prompts, the
+permission mode, and subagent transcript paths. When a turn ends, it hands a
+job to its worker thread. A harness without a transcript reader gets a reducer
+(`tracer.py`) that builds its turns from hook events instead.
 
 Profiles map native events and common or event-specific payload fields to a
 fixed canonical vocabulary. The reducer contains no harness names or native
 event names. Harnesses that omit an event or field lose only that detail rather
-than requiring alternate reducer paths or rejecting the remaining trace.
+than requiring alternate code paths.
 
 ## State and lifecycle
 
-The reducer holds only the current mutable turn for each session. Stable
-harness tool-call IDs are authoritative; ID-less events match only one
-unambiguous running tool with a compatible name and input. Subagents correlate
-strictly by agent ID.
+A Codex `Stop` names the turn it ends. A Claude Code `Stop` ends the
+transcript's last turn, unless background tasks are still running. When a
+session goes idle past its TTL, every turn not yet written is sent as final,
+which covers interrupted turns and turns whose `Stop` was skipped. A parent
+turn's job carries the finished turns of its subagents.
 
-A harness turn-end event is the authoritative normal boundary. It closes and
-hands the turn to the emitter immediately unless its profile maps a truthy
-pending-work field. Pending work leaves the turn mutable until a later clean
-turn end; the session TTL remains crash safety if that event never arrives.
-After emission, the turn is removed from reducer state regardless of SDK
-acceptance, and later events are not attached retroactively. Weave owns
-agent-span routing, asynchronous export, batching, and network retry; the
-reducer has no partial retry queue.
-
-The sidecar exits after its idle deadline only when no mutable turn remains.
-Shutdown finalizes current sessions and requests a bounded exporter flush.
+The writer keeps each session's CES IDs and written turns in a per-session
+file, so a restarted sidecar continues the same Trajectory and never resends a
+written turn. The sidecar exits after its idle deadline only when no job is
+pending. Shutdown gives queued jobs a bounded time, then moves what is left to
+the dead-letter file.
 
 ## Reliability and privacy
 
-Delivery is best-effort. There is no spool, outbox, replay, dead-letter log, or
-exactly-once guarantee. Losing a sidecar process can lose in-flight state, and
-an initialization failure can drop the affected turn. These tradeoffs keep the
-hook path bounded and the runtime small.
+Every write carries an idempotency key built from the turn, so a retry or a
+replay never duplicates a Case. Rate limits and unavailability are retried. A
+turn that still fails is kept whole in the dead-letter file, and
+`weave-agent-adapter evaluations replay` reruns it from the top. A hook-built
+turn that is still open when the sidecar dies is lost.
 
-Redaction occurs before debug or network output. Sensitive keys, common token
+Redaction occurs before any network output. Sensitive keys, common token
 shapes, JWTs, AWS access-key IDs, and complete PEM private-key blocks are
 replaced. Rotating diagnostics contain phase and type metadata, never payload
 values or exception messages. Runtime files are user-only.
@@ -79,24 +81,20 @@ values or exception messages. Runtime files are user-only.
 ## Deliberate boundaries
 
 - Hook and sidecar remain separate for latency and dependency isolation.
-- Profile normalization and state reduction remain separate so new command-hook
-  harnesses do not add reducer branches.
-- Optional named enrichers may understand a native transcript format; the
-  reducer and emitter never branch on a harness name. Enrichment is
-  best-effort because those formats are not part of this adapter's contract.
+- Profile normalization and turn building remain separate, so a new
+  command-hook harness adds a profile and, to reach CES, a transcript reader,
+  not branches in shared code.
+- Transcript formats are not part of this adapter's contract. Each reader is
+  the only code that knows its format.
 - Capabilities are additive: session end, explicit failures, permissions,
-  subagents, compaction, model metadata, enrichment, configuration surfaces,
-  and pending-work signals are all optional.
-- Reduction and Weave mapping remain separate so lifecycle behavior is tested
-  independently from SDK objects.
-- `weave.log_turn` is the only production tracing plane.
-- Configuration resolves one project route before the emitter; the emitter
-  does not discover or reinterpret routing.
+  subagents, compaction, model metadata, configuration surfaces, and
+  pending-work signals are all optional.
+- `records.py` and [EVALUATIONS_CASE_CONTRACT.md](EVALUATIONS_CASE_CONTRACT.md)
+  own the CES field contract.
 
 ## Non-goals
 
-- Durable or guaranteed delivery.
 - In-process harness instrumentation.
 - Hook mechanisms other than JSON on standard input.
 - A plugin packaging or marketplace workflow.
-- Reconstructing complete reducer state after a crash.
+- Splitting a turn that exceeds one CES request.

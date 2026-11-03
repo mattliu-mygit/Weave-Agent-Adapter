@@ -1,13 +1,13 @@
-"""Sidecar configuration and authoritative Weave project routing.
+"""Sidecar configuration.
 
 The hook stays config-free; it just spawns the sidecar, which loads this. TOML
 parsing needs `tomli` on Python < 3.11 (a sidecar-only dependency).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
-import re
 from dataclasses import dataclass, field
 
 try:
@@ -26,15 +26,14 @@ EVALUATIONS_STATE_PATH = os.path.expanduser(os.environ.get(
     "WEAVE_AGENT_ADAPTER_EVALUATIONS_STATE", "~/.weave-agent-adapter/evaluations.json"))
 
 
-def resolve_project(configured: str, cwd=None, per_repo: bool = False) -> str:
-    """Resolve the project route once, preserving an explicitly chosen entity."""
-    entity, separator, project = configured.partition("/")
-    if not separator:
-        entity, project = "", configured
-    if per_repo and cwd:
-        leaf = os.path.basename(os.path.normpath(cwd))
-        project = re.sub(r"[^A-Za-z0-9_.-]", "-", leaf).strip("-") or project
-    return f"{entity}/{project}" if entity else project
+def session_sampled(session_id: str, rate: float) -> bool:
+    """`[sampling] session_rate`, decided per session ID, so a session is all in or all out."""
+    if rate >= 1.0:
+        return True
+    if rate <= 0.0:
+        return False
+    return int.from_bytes(hashlib.md5(session_id.encode()).digest()[:4], "big") / 2 ** 32 < rate
+
 
 @dataclass
 class EvaluationsConfig:
@@ -50,8 +49,6 @@ class EvaluationsConfig:
 
 @dataclass
 class Config:
-    project: str = "weave-agent-adapter"   # "entity/project" or bare "project"
-    project_per_repo: bool = False         # trace each repo (cwd leaf) to its own project
     redact_enabled: bool = True
     redact_keys: list = None               # None -> Redactor defaults
     session_rate: float = 1.0
@@ -72,17 +69,11 @@ def _load_file(path: str) -> dict:
 
 def load_config(path=None) -> Config:
     d = _load_file(path or DEFAULT_PATH)
-    weave = d.get("weave", {})
     red = d.get("redaction", {})
     samp = d.get("sampling", {})
     side = d.get("sidecar", {})
     c = Config()
 
-    c.project = os.environ.get("WEAVE_PROJECT", weave.get("project", c.project))
-    entity = os.environ.get("WANDB_ENTITY", weave.get("entity"))
-    if entity and "/" not in c.project:
-        c.project = f"{entity}/{c.project}"
-    c.project_per_repo = bool(weave.get("project_per_repo", c.project_per_repo))
     c.redact_enabled = bool(red.get("enabled", c.redact_enabled))
     c.redact_keys = red.get("redact_keys", None)
     c.session_rate = float(samp.get("session_rate", c.session_rate))

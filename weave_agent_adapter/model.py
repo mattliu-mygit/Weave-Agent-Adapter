@@ -100,7 +100,6 @@ class Turn:
 @dataclass
 class Session:
     session_id: str
-    project: str
     last_activity: float
     harness: Optional[str] = None
     transcript: Optional[str] = None

@@ -20,7 +20,7 @@ def _wire(**overrides):
 
 
 def test_sidecar_rejects_unsupported_wire_version(tmp_path, monkeypatch):
-    sidecar = Sidecar("ent/proj", str(tmp_path / "sidecar.sock"))
+    sidecar = Sidecar(str(tmp_path / "sidecar.sock"))
     handled = []
     monkeypatch.setattr(sidecar, "_tracer_for",
                         lambda harness: SimpleNamespace(handle=handled.append))
@@ -29,7 +29,7 @@ def test_sidecar_rejects_unsupported_wire_version(tmp_path, monkeypatch):
 
 
 def test_sidecar_rejects_non_object_payload(tmp_path, monkeypatch):
-    sidecar = Sidecar("ent/proj", str(tmp_path / "sidecar.sock"))
+    sidecar = Sidecar(str(tmp_path / "sidecar.sock"))
     handled = []
     monkeypatch.setattr(sidecar, "_tracer_for",
                         lambda harness: SimpleNamespace(handle=handled.append))
@@ -38,7 +38,7 @@ def test_sidecar_rejects_non_object_payload(tmp_path, monkeypatch):
 
 
 def test_sidecar_rejects_non_finite_timestamp(tmp_path, monkeypatch):
-    sidecar = Sidecar("ent/proj", str(tmp_path / "sidecar.sock"))
+    sidecar = Sidecar(str(tmp_path / "sidecar.sock"))
     handled = []
     monkeypatch.setattr(sidecar, "_tracer_for",
                         lambda harness: SimpleNamespace(handle=handled.append))
@@ -47,7 +47,7 @@ def test_sidecar_rejects_non_finite_timestamp(tmp_path, monkeypatch):
 
 
 def test_sidecar_parses_trace_role_with_backward_compatible_default(tmp_path, monkeypatch):
-    sidecar = Sidecar("ent/proj", str(tmp_path / "sidecar.sock"))
+    sidecar = Sidecar(str(tmp_path / "sidecar.sock"))
     handled = []
     monkeypatch.setattr(
         sidecar,
@@ -67,30 +67,22 @@ def test_sidecar_parses_trace_role_with_backward_compatible_default(tmp_path, mo
 
 
 def test_idle_timeout_does_not_exit_with_active_work(tmp_path):
-    sidecar = Sidecar("ent/proj", str(tmp_path / "sidecar.sock"), idle_s=1.0)
+    sidecar = Sidecar(str(tmp_path / "sidecar.sock"), idle_s=1.0)
     sidecar._last = 1.0
     sidecar.tracers["codex"] = SimpleNamespace(has_active_work=lambda: True)
     assert sidecar.can_idle_exit(now=10.0) is False
 
 
 def test_idle_timeout_exits_after_work_is_emitted(tmp_path):
-    sidecar = Sidecar("ent/proj", str(tmp_path / "sidecar.sock"), idle_s=1.0)
+    sidecar = Sidecar(str(tmp_path / "sidecar.sock"), idle_s=1.0)
     sidecar._last = 1.0
     sidecar.tracers["codex"] = SimpleNamespace(has_active_work=lambda: False)
     assert sidecar.can_idle_exit(now=10.0) is True
 
 
-def test_flush_emitter_reports_failure(tmp_path):
-    emitter = SimpleNamespace(flush=lambda: False)
-    sidecar = Sidecar("ent/proj", str(tmp_path / "sidecar.sock"), emitter=emitter)
-    assert sidecar.flush_emitter() is False
+def test_only_a_harness_without_a_transcript_reader_gets_a_tracer(tmp_path):
+    sidecar = Sidecar(str(tmp_path / "sidecar.sock"))
 
-
-def test_bare_project_is_deferred_to_weave(tmp_path):
-    sidecar = Sidecar("project", str(tmp_path / "sidecar.sock"))
-
-    first = sidecar._tracer_for("codex")
-    second = sidecar._tracer_for("claude-code")
-
-    assert first.project == "project"
-    assert second.project == "project"
+    assert sidecar._tracer_for("codex") is None
+    assert sidecar._tracer_for("claude-code") is None
+    assert sidecar._tracer_for("gemini-cli") is sidecar._tracer_for("gemini-cli")

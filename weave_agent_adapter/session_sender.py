@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass, field
 
 from . import claude_transcript, codex_transcript, dlq, records
+from .config import session_sampled
 from .config_surface import config_version
 from .diagnostics import diagnose
 from .model import DEFAULT_TRACE_ROLE
@@ -59,8 +60,9 @@ class _Job:
 
 class SessionSender:
     def __init__(self, writer, dlq_path: str, redactor, adapter_version: str,
-                 harnesses=("codex",), config_paths: dict | None = None):
+                 harnesses=("codex",), config_paths: dict | None = None, session_rate: float = 1.0):
         self.writer = writer
+        self.session_rate = session_rate
         self.dlq_path = dlq_path
         self.redactor = redactor
         self.adapter_version = adapter_version
@@ -83,7 +85,7 @@ class SessionSender:
             return
         p = wire.payload
         sid = p.get("session_id")
-        if not sid:
+        if not sid or not session_sampled(sid, self.session_rate):
             return
         s = self.sessions.setdefault(sid, _Session(wire.harness))
         s.last_activity = wire.captured_at

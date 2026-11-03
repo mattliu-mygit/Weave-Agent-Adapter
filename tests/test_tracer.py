@@ -24,7 +24,6 @@ def test_turn_finalized_on_session_end():
         ("SessionEnd", {"session_id": SID}),
     ])
     (turn, session), = turns
-    assert session.project == "ent/proj"
     assert session.cwd == "/repo"
     assert turn.input_text == "do it"
     assert turn.output_text == "done"
@@ -49,7 +48,7 @@ def test_session_retains_launch_trace_role():
 
 
 def test_conflicting_roles_on_one_session_fail_safe_to_other_system():
-    tr = Tracer(load_profile("claude-code"), "ent/proj")
+    tr = Tracer(load_profile("claude-code"))
     tr.handle(
         WireEvent(
             "claude-code",
@@ -241,17 +240,6 @@ def test_session_autocreated_without_session_start():
     assert tools_of(turn, "Bash")
 
 
-def test_project_per_repo_routes_by_cwd_leaf():
-    tr, turns = run([
-        ("SessionStart", {"session_id": SID, "cwd": "/Users/me/my-repo"}),
-        ("UserPromptSubmit", {"session_id": SID, "prompt": "hi"}),
-        ("Stop", {"session_id": SID}),
-        ("SessionEnd", {"session_id": SID}),
-    ], project="ent/default-proj", project_per_repo=True)
-    (_, session), = turns
-    assert session.project == "ent/my-repo"       # cwd leaf + configured entity
-
-
 def test_thread_id_from_transcript_root(tmp_path):
     tp = tmp_path / "t.jsonl"
     tp.write_text("\n".join([
@@ -323,7 +311,7 @@ def test_failed_emission_is_one_shot_and_does_not_block_next_turn():
             return False
 
     emitter = Emitter()
-    tr = Tracer(load_profile("claude-code"), "ent/proj", emitter=emitter)
+    tr = Tracer(load_profile("claude-code"), emitter=emitter)
     for index, (event, payload) in enumerate([
         ("SessionStart", {"session_id": SID}),
         ("UserPromptSubmit", {"session_id": SID, "prompt": "first"}),
@@ -403,7 +391,7 @@ def test_event_specific_fields_update_turn_and_mark_embedded_tool_error():
         def emit_turn(self, turn, session):
             finalized.append((turn, session))
 
-    tr = Tracer(profile, "ent/proj", emitter=Emitter())
+    tr = Tracer(profile, emitter=Emitter())
     for index, (event, payload) in enumerate([
         ("Begin", {"session_id": SID, "prompt": "fix it"}),
         ("Model", {"session_id": SID, "request": {"model": "model-1"}}),

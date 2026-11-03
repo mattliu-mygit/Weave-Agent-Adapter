@@ -42,9 +42,6 @@ agent_id           = "agent_id"
 agent_type         = "agent_type"
 compaction_trigger = "trigger"              # PreCompact (provisional)
 
-[enrich]
-source = "codex-transcript"                  # assistant text, reasoning summaries, usage
-
 [registration]
 user_path  = "~/.codex/hooks.json"           # install (default scope)
 local_path = ".codex/hooks.json"             # install --local

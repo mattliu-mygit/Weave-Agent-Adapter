@@ -35,7 +35,7 @@ def _wait_for_socket(path: Path) -> None:
 def test_every_registered_hook_reaches_sidecar(harness, tmp_path):
     repo_root = Path(__file__).resolve().parents[1]
     socket_path = repo_root / f".t-{os.getpid()}-{uuid.uuid4().hex[:6]}.sock"
-    sidecar = Sidecar("ent/proj", str(socket_path), idle_s=30.0)
+    sidecar = Sidecar(str(socket_path), idle_s=30.0)
     seen = []
     original_handle = sidecar._handle_line
 
