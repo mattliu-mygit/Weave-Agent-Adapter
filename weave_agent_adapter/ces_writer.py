@@ -81,11 +81,12 @@ class CesWriter:
     def _write_locked(self, job: dict, harness: str, sid: str) -> list:
         state = self._load(harness, sid)
         s = self._session_trajectory(job, state)
-        deferred = []
+        deferred, stored = [], {}
         for turn in job["turns"]:
             agent = turn["agent_id"]
             if agent is not None and agent not in state["agents"]:
-                root = state["agent_roots"].get(agent) or self._retry_root(state, agent)
+                root = (state["agent_roots"].get(agent) or self._retry_root(state, agent)
+                        or self._root_from_site(job, state, s, agent, stored))
                 parent = s if turn["parent_agent_id"] is None else state["agents"].get(turn["parent_agent_id"])
                 if root is None or parent is None:
                     # CES roots a subagent's Trajectory at a Case of its parent's Trajectory, so the
@@ -143,23 +144,48 @@ class CesWriter:
             del state["unrooted"][agent]
         return root
 
+    def _root_from_site(self, job: dict, state: dict, s: str, agent: str, stored: dict) -> str | None:
+        """Root a top-level subagent at the stored Case of the call that started it, when the job
+        names that call and its turn is written. A Workflow call's subagents need this, because
+        the launching turn is often written before their files exist."""
+        site = (job.get("launch_sites") or {}).get(agent)
+        if not site or site[0] not in state["turns"]:
+            return None
+        turn_id, call_id = site
+        if turn_id not in stored:
+            stored[turn_id] = self._stored_calls(s, turn_id)
+        root = (stored[turn_id] or {}).get(call_id)
+        if root is not None:
+            state["agent_roots"][agent] = root
+        return root
+
+    def _stored_calls(self, trajectory: str, turn_id: str) -> dict | None:
+        """The Case IDs CES already holds for a turn's tool calls, by call ID, or None."""
+        cases = self._stored_cases(trajectory, turn_id)
+        return None if cases is None else {
+            case["input"].get("call_id"): case["case_id"] for case in cases if case["input"].get("call_id")}
+
     def _stored_steps(self, trajectory: str, turn_id: str) -> dict | None:
         """The Case IDs CES already holds for a turn, by step index, or None when unreadable."""
-        by_step, cursor = {}, None
+        cases = self._stored_cases(trajectory, turn_id)
+        return None if cases is None else {case["input"].get("step_index"): case["case_id"] for case in cases}
+
+    def _stored_cases(self, trajectory: str, turn_id: str) -> list | None:
+        """The Cases CES already holds for a turn, or None when they can't be read."""
+        found, cursor = [], None
         try:
             while True:
                 query = "?limit=1000" + (f"&cursor={urllib.parse.quote(cursor)}" if cursor else "")
                 page = self.client.request("GET", f"{self.scope_path}/trajectories/{trajectory}/cases{query}", None)
-                for case in page.get("cases", []):
-                    if (case.get("input") or {}).get("turn_id") == turn_id:
-                        by_step[case["input"].get("step_index")] = case["case_id"]
+                found += [case for case in page.get("cases", [])
+                          if (case.get("input") or {}).get("turn_id") == turn_id]
                 cursor = page.get("next_cursor")
                 if not cursor:
                     break
         except Exception:
             diagnose("ces_stored_cases_unreadable")
             return None
-        return by_step
+        return found
 
     @contextlib.contextmanager
     def _locked(self, harness: str, sid: str):

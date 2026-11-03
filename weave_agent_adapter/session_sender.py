@@ -248,14 +248,15 @@ class SessionSender:
             diagnose("ces_end_record_timeout", harness=job.ctx.harness)
         return t
 
-    def _agent_turns(self, job: _Job, t, reader, pending: list) -> list:
+    def _agent_turns(self, job: _Job, t, reader, pending: list, sites: dict) -> list:
         # Subagent turns are deduplicated by what the session file records as written, not by
         # _sent, because the writer defers a subagent whose launching turn isn't written yet.
         written = self.writer.written_turns(job.ctx.harness, job.ctx.session_id)
-        # With no parent turn to write first, a subagent the session file can't root yet would
-        # only be deferred, so its turns aren't built.
+        # With no parent turn to write first, a subagent the writer can't root yet would only be
+        # deferred, so its turns aren't built. A written launching turn lets the writer root it.
         only = (None if pending or job.final
-                else self.writer.rootable_agents(job.ctx.harness, job.ctx.session_id))
+                else self.writer.rootable_agents(job.ctx.harness, job.ctx.session_id)
+                | {agent for agent, (turn_id, _) in sites.items() if turn_id in written})
         return [(key, turn) for key, turn in
                 agent_turns(reader, t, job.agents, job.facts, job.ctx, self.redactor, self._sent,
                             final=job.final, only=only)
@@ -267,7 +268,8 @@ class SessionSender:
         thread_id = reader.thread_id(t)
         pending = [turn_id for turn_id in self._turns_to_send(t, job, reader)
                    if (thread_id, turn_id) not in self._sent]
-        agents = self._agent_turns(job, t, reader, pending)
+        sites = reader.launch_sites(t)
+        agents = self._agent_turns(job, t, reader, pending, sites)
         if not pending and not agents:
             return
         ends = reader.turn_ends(t)
@@ -278,7 +280,8 @@ class SessionSender:
         session_case = reader.session_case(t, first, job.ctx)
         session_case = {**session_case,
                         "input": {k: self.redactor.scrub(v) for k, v in session_case["input"].items()}}
-        prefix = {"harness": job.ctx.harness, "session_id": job.ctx.session_id, "session_case": session_case}
+        prefix = {"harness": job.ctx.harness, "session_id": job.ctx.session_id, "session_case": session_case,
+                  "launch_sites": _sites_for([turn for _, turn in agents], sites)}
         for number, turn_id in enumerate(pending):
             turn = reader.select_turn(t, turn_id)
             riders = agents if number == len(pending) - 1 else []
@@ -320,6 +323,11 @@ def _turn_open(t, job: _Job, reader):
     ends = dict(reader.turn_ends(t))
     turn_id = job.turn_id if job.turn_id is not None else next(reversed(ends), None)
     return ends[turn_id] is None if turn_id in ends else None
+
+
+def _sites_for(turns: list, sites: dict) -> dict:
+    """The launch sites of the subagents these turns belong to, so the writer can root them."""
+    return {turn["agent_id"]: sites[turn["agent_id"]] for turn in turns if turn["agent_id"] in sites}
 
 
 def agent_turns(reader, t, paths, facts, ctx, redactor, sent=frozenset(), final=False, only=None) -> list:
@@ -372,6 +380,6 @@ def transcript_jobs(reader, t, ctx: TurnContext, redactor, agents=(), final=True
         if number == len(turn_ids) - 1:
             turns += [turn for _, turn in agent_turns(reader, t, list(agents), {}, ctx, redactor, final=final)]
         body = {"harness": ctx.harness, "session_id": ctx.session_id, "session_case": session_case,
-                "turns": turns}
+                "turns": turns, "launch_sites": _sites_for(turns, reader.launch_sites(t))}
         jobs.append((f"turn-v1:{ctx.harness}:{ctx.session_id}:{turn_id}", body))
     return jobs

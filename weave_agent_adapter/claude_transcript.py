@@ -11,7 +11,8 @@ from __future__ import annotations
 import glob
 import json
 import os
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 
 from . import records
 from .records import ToolFacts, TurnContext
@@ -25,6 +26,7 @@ class Transcript:
     rows: list
     meta: dict              # the subagent's .meta.json, empty for the main session
     agent_id: str | None    # None for the main session
+    cache: dict = field(default_factory=dict, repr=False, compare=False)
 
 
 @dataclass
@@ -216,8 +218,15 @@ def _decision(facts: ToolFacts | None, result_row: dict | None) -> str | None:
     return None
 
 
+WORKFLOW_ID = re.compile(r"wf_[0-9a-f]{8}-[0-9a-f]{3}")
+
+
 def _spawned_by(t: Transcript) -> dict:
-    """Task tool_use id -> the subagent it started, from the subagent meta files."""
+    """Tool_use id -> the subagents it started. A Task call's subagent names the call in its meta
+    file. A Workflow call's subagents live in the workflow directory its result names."""
+    if "spawned" in t.cache:
+        return t.cache["spawned"]
+    workflows = _workflow_calls(t)
     spawned = {}
     for path in _agent_files(t, "agent-*.meta.json"):
         try:
@@ -225,12 +234,45 @@ def _spawned_by(t: Transcript) -> dict:
                 call = json.load(fh).get("toolUseId")
         except (OSError, ValueError):
             continue
+        call = call or workflows.get(os.path.basename(os.path.dirname(path)))
         if call:
             try:
-                spawned[call] = load(path[:-len(".meta.json")] + ".jsonl").agent_id
+                spawned.setdefault(call, []).append(load(path[:-len(".meta.json")] + ".jsonl").agent_id)
             except (OSError, ValueError):
                 continue            # a subagent file missing or mid-write must not fail the turn
+    t.cache["spawned"] = spawned
     return spawned
+
+
+def _workflow_calls(t: Transcript) -> dict:
+    """Workflow ID -> the Workflow tool_use whose result names it."""
+    started, calls = set(), {}
+    for row in t.rows:
+        content = (row.get("message") or {}).get("content")
+        for block in content if isinstance(content, list) else ():
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_use" and block.get("name") == "Workflow":
+                started.add(block.get("id"))
+            elif block.get("type") == "tool_result" and block.get("tool_use_id") in started:
+                found = WORKFLOW_ID.search(json.dumps(block.get("content"), default=str))
+                if found:
+                    calls.setdefault(found.group(0), block["tool_use_id"])
+    return calls
+
+
+def launch_sites(t: Transcript) -> dict:
+    """Subagent ID -> [turn ID, tool_use ID] of the call in this file that started it."""
+    spawned = _spawned_by(t)
+    sites = {}
+    for turn_id, _ in turn_ends(t) if spawned else ():
+        for row in select_turn(t, turn_id).rows:
+            content = (row.get("message") or {}).get("content")
+            for block in content if isinstance(content, list) else ():
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    for agent in spawned.get(block.get("id"), ()):
+                        sites.setdefault(agent, [turn_id, block["id"]])
+    return sites
 
 
 def turn_records(t: Transcript, turn: TurnRecords, facts: dict, ctx: TurnContext, redactor) -> dict:
@@ -299,7 +341,7 @@ def turn_records(t: Transcript, turn: TurnRecords, facts: dict, ctx: TurnContext
                  "output": output, "output_truncated": truncated, "error": output if failed else None,
                  "exit_code": None, "duration_ms": ended - began if began is not None and ended is not None else None,
                  "permission_decision": _decision(facts.get(call_id), result_row)},
-                spawns=[spawned[call_id]] if call_id in spawned else []))
+                spawns=list(spawned.get(call_id, ()))))
 
     compactions = 0
     for position, row in enumerate(rows):

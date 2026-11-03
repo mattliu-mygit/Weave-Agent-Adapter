@@ -238,3 +238,27 @@ def test_a_final_job_raises_for_a_subagent_that_still_waits(fake, tmp_path):
 
     assert raised.value.code == "subagent_deferred"
     assert writer.written_turns("codex", "T3") == {"P1"}
+
+
+def test_a_subagent_is_rooted_at_its_launch_site_once_its_launching_turn_is_written(fake, tmp_path):
+    job = _job(tmp_path)
+    parent, child = job["turns"]
+    parent["spawns"] = {}       # the launching turn was written before the subagent's files existed
+    writer = _writer(fake, tmp_path)
+    writer.write_turn({**job, "turns": [parent]})
+    call = next(c["input"] for c in parent["cases"] if c["input"].get("call_id"))
+    answer = fake.respond
+
+    def respond(method, path, headers, body):
+        if method == "GET" and "/trajectories/" in path:
+            stored = [{"case_id": f"stored-{c['input']['step_index']}",
+                       "input": {"turn_id": "P1", "step_index": c["input"]["step_index"],
+                                 "call_id": c["input"].get("call_id")}} for c in parent["cases"]]
+            return 200, {}, {"cases": stored, "next_cursor": None}
+        return answer(method, path, headers, body)
+    fake.respond = respond
+
+    writer.write_turn({**job, "turns": [child], "launch_sites": {"C1": ["P1", call["call_id"]]}})
+
+    subagent = next(body for _, h, body in fake.requests if h.get("Idempotency-Key") == "subagent-v1:codex:T3:C1")
+    assert subagent["trajectories"][0]["root_case_id"] == f"stored-{call['step_index']}"

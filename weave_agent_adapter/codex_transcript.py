@@ -366,3 +366,8 @@ def parent_thread_id(t: Transcript):
 def subagent_paths(t: Transcript) -> list:
     """Codex names subagent transcripts in SubagentStop events, not beside the session file."""
     return []
+
+
+def launch_sites(t: Transcript) -> dict:
+    """Codex records a subagent's start in the turn that launched it, so no lookup is needed."""
+    return {}

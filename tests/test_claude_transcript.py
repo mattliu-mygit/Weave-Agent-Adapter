@@ -1,6 +1,7 @@
 """Claude Code transcripts to turn records: turns, merges, tool results, subagents, and interruptions."""
 from __future__ import annotations
 
+import json
 import os
 
 from weave_agent_adapter import claude_transcript as ct_reader, records
@@ -159,3 +160,24 @@ def test_a_fork_drops_its_copy_of_the_parents_history(tmp_path):
     assert [row["uuid"] for row in fork.rows] == ["f1"]
     assert reader.turn_ends(fork) == [("f1", "completed")]
     assert reader.parent_thread_id(fork) == "A"
+
+
+def test_a_workflow_call_starts_the_subagents_in_the_workflow_directory_its_result_names(tmp_path):
+    session = ct.write(tmp_path / f"{ct.SESSION}.jsonl", [
+        ct.prompt(1, "u1", "run the workflow"),
+        ct.assistant(2, "a-1", "msg_1", [ct.tool_use("toolu_wf", "Workflow", {"script": "x"})],
+                     stop_reason="tool_use"),
+        ct.tool_result(3, "r1", "toolu_wf", "Started workflow wf_0123abcd-4ef"),
+        ct.assistant(4, "a-2", "msg_2", [ct.text("Done.")], stop_reason="end_turn"),
+    ])
+    folder = os.path.join(session[:-len(".jsonl")], "subagents", "workflows", "wf_0123abcd-4ef")
+    ct.write(os.path.join(folder, "agent-w1.jsonl"), [
+        ct.prompt(1, "w-u1", "review", agent="w1"),
+        ct.assistant(2, "w-a1", "msg_w", [ct.text("ok")], stop_reason="end_turn", agent="w1"),
+    ])
+    with open(os.path.join(folder, "agent-w1.meta.json"), "w", encoding="utf-8") as fh:
+        json.dump({"agentType": "reviewer", "workflowPhase": "review", "spawnDepth": 1}, fh)
+
+    t = ct_reader.load(session)
+
+    assert ct_reader.launch_sites(t) == {"w1": ["u1", "toolu_wf"]}
