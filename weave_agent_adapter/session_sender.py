@@ -109,6 +109,10 @@ class SessionSender:
         if wire.event == "SubagentStop" and p.get("agent_transcript_path"):
             if p["agent_transcript_path"] not in s.agents:
                 s.agents.append(p["agent_transcript_path"])
+                try:
+                    self.writer.remember_agent_path(s.harness, sid, p["agent_transcript_path"])
+                except OSError as error:
+                    diagnose("ces_agent_path", harness=s.harness, error=error)
             if s.transcript:
                 # Send the finished subagent now, not at the parent's next Stop or the idle sweep.
                 self._enqueue(sid, s, None, sweep=True)
@@ -169,7 +173,8 @@ class SessionSender:
                           s.config_version)
         facts = {k: ToolFacts(v.hook_tool_name, v.permission_requested, v.completed)
                  for k, v in s.tools.items()}
-        job = _Job(s.transcript, turn_id, list(s.agents), ctx, facts, sweep, final)
+        agents = list(dict.fromkeys([*self.writer.agent_paths(s.harness, sid), *s.agents]))
+        job = _Job(s.transcript, turn_id, agents, ctx, facts, sweep, final)
         coalesce = sweep and not final
         with self._lock:
             queued = self._queued_sweeps.get(sid) if coalesce else None

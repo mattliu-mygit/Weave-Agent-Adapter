@@ -24,6 +24,12 @@ class _Writer:
     def rootable_agents(self, harness, session_id):
         return {agent for job in self.jobs for turn in job["turns"] for agent in turn["spawns"]}
 
+    def agent_paths(self, harness, session_id):
+        return list(getattr(self, "paths", {}).get(session_id, []))
+
+    def remember_agent_path(self, harness, session_id, path):
+        self.__dict__.setdefault("paths", {}).setdefault(session_id, []).append(path)
+
     def write_turn(self, job, final=False):
         self.jobs.append(job)
         if self.error:
@@ -326,3 +332,22 @@ def test_closing_with_queued_jobs_leaves_one_rebuild_entry_per_session(tmp_path)
     assert [e["key"] for e in entries if "job" in e] == ["turn-v1:codex:T3:P1"]   # the write in flight
     [rebuild] = [e["rebuild"] for e in entries if "rebuild" in e]
     assert (rebuild["transcript"], rebuild["agents"], rebuild["final"]) == (parent, [child], True)
+
+
+def test_a_resumed_session_keeps_the_subagent_transcripts_named_before(tmp_path):
+    parent = ct.write(tmp_path / "parent.jsonl", ct.parent_with_subagent())
+    child = ct.write(tmp_path / "child.jsonl", ct.subagent_fork())
+    writer = _Writer()
+    sender = _sender(tmp_path, writer)
+    processed = []
+    process = sender._process
+    sender._process = lambda job: processed.append(job) or process(job)
+
+    sender.handle(_event("SessionStart", 1.0, session_id="T3", transcript_path=parent))
+    sender.handle(_event("SubagentStop", 2.0, session_id="T3", agent_id="C1", agent_transcript_path=child,
+                         turn_id="K1"))
+    sender.sweep(now=100.0, ttl=0.0)                # the session goes idle and is forgotten
+    sender.handle(_event("Stop", 101.0, session_id="T3", transcript_path=parent, turn_id="P1"))
+    _finish(sender)
+
+    assert processed[-1].agents == [child]

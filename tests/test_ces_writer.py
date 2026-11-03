@@ -262,3 +262,10 @@ def test_a_subagent_is_rooted_at_its_launch_site_once_its_launching_turn_is_writ
 
     subagent = next(body for _, h, body in fake.requests if h.get("Idempotency-Key") == "subagent-v1:codex:T3:C1")
     assert subagent["trajectories"][0]["root_case_id"] == f"stored-{call['step_index']}"
+
+
+def test_named_subagent_transcripts_survive_a_restarted_writer(fake, tmp_path):
+    _writer(fake, tmp_path).remember_agent_path("codex", "T3", "/a.jsonl")
+    _writer(fake, tmp_path).remember_agent_path("codex", "T3", "/a.jsonl")
+
+    assert _writer(fake, tmp_path).agent_paths("codex", "T3") == ["/a.jsonl"]

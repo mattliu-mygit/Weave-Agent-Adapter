@@ -197,6 +197,29 @@ class CesWriter:
             fcntl.flock(lock, fcntl.LOCK_EX)
             yield
 
+    def agent_paths(self, harness: str, sid: str) -> list:
+        """Subagent transcript paths the hooks named for this session, kept across restarts."""
+        try:
+            with open(self._path(harness, sid)[:-len(".json")] + ".agents.json", encoding="utf-8") as fh:
+                paths = json.load(fh)
+        except (OSError, ValueError):
+            return []
+        return [p for p in paths if isinstance(p, str)] if isinstance(paths, list) else []
+
+    def remember_agent_path(self, harness: str, sid: str, path: str) -> None:
+        """Keep a subagent transcript path a hook named. Codex names them only in SubagentStop, so a
+        resumed session or a restarted sidecar would otherwise lose them. Only the sidecar
+        thread writes this file, so it takes no lock."""
+        paths = self.agent_paths(harness, sid)
+        if path in paths:
+            return
+        os.makedirs(self.state_dir, mode=0o700, exist_ok=True)
+        target = self._path(harness, sid)[:-len(".json")] + ".agents.json"
+        fd = os.open(target + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump([*paths, path], fh)
+        os.replace(target + ".tmp", target)
+
     def rootable_agents(self, harness: str, sid: str) -> set:
         """Subagents this session's file can root now or already holds Trajectories for."""
         state = self._load(harness, sid)

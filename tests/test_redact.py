@@ -46,3 +46,13 @@ def test_complete_multiline_pem_is_replaced():
     assert "SECRETBODY" not in out
     assert "BEGIN PRIVATE KEY" not in out
     assert out == "before\n[REDACTED]\nafter"
+
+
+def test_deny_keys_match_whole_words_not_substrings():
+    from weave_agent_adapter.redact import REDACTED, Redactor
+
+    r = Redactor()
+    for key in ("apiKey", "x-api-key", "GITHUB_TOKEN", "secrets", "Authorization", "authToken"):
+        assert r.scrub("value", key) == REDACTED, key
+    for key in ("author", "author_email", "tokenizer"):
+        assert r.scrub("value", key) == "value", key

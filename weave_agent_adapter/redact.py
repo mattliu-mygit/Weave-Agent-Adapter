@@ -30,16 +30,32 @@ _PATTERNS = [
 ]
 
 
+def _words(key: str) -> list:
+    """A key's lowercase words: `accessToken`, `access-token`, and `ACCESS_TOKEN` give access, token."""
+    return [w for w in re.split(r"[^a-z0-9]+", re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", key).lower()) if w]
+
+
 class Redactor:
     def __init__(self, deny_keys=None, enabled: bool = True):
         keys = DEFAULT_DENY_KEYS | set(deny_keys) if deny_keys is not None else DEFAULT_DENY_KEYS
-        self.deny = {k.lower() for k in keys}
+        self.deny = {tuple(_words(k)) for k in keys if _words(k)}
         self.enabled = enabled
+
+    def _denied(self, key: str) -> bool:
+        """Whether a deny key's words appear in order in the key, the last one possibly plural,
+        so `x_api_key` and `secrets` match while `author` and `tokenizer` don't."""
+        words = _words(key)
+        for deny in self.deny:
+            for i in range(len(words) - len(deny) + 1):
+                window = words[i:i + len(deny)]
+                if window[:-1] == list(deny[:-1]) and window[-1] in (deny[-1], deny[-1] + "s"):
+                    return True
+        return False
 
     def scrub(self, value: Any, key: str | None = None) -> Any:
         if not self.enabled:
             return value
-        if key is not None and any(d in key.lower() for d in self.deny):
+        if key is not None and self._denied(key):
             return REDACTED
         if isinstance(value, dict):
             return {k: self.scrub(v, k) for k, v in value.items()}
