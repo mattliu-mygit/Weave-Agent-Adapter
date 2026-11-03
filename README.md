@@ -249,6 +249,7 @@ project configuration and diagnostics.
 ```bash
 weave-agent-adapter evaluations setup    # create the Dataset, declare its fields, save its IDs
 weave-agent-adapter evaluations replay   # resend turns that failed, from the dead-letter file
+weave-agent-adapter evaluations status   # how many turns wait in the dead-letter file, and why
 weave-agent-adapter evaluations log-transcript --harness codex --file run.jsonl [--dataset ab-arms]
                                          # log one finished session file; prints its session Case and Trajectory IDs
 ```

@@ -237,3 +237,23 @@ def test_session_sender_is_built_when_state_and_key_match(env):
         assert sender.harnesses == {"claude-code", "codex"}
     finally:
         sender.close()
+
+
+def test_status_reports_the_turns_waiting_in_the_dead_letter_file(tmp_path, monkeypatch, capsys):
+    from types import SimpleNamespace
+
+    from weave_agent_adapter import cli, dlq
+
+    path = tmp_path / "dlq.jsonl"
+    path.write_text(
+        json.dumps({"failed_at": 1_800_000_000.0, "error_code": "unavailable"}) + "\n"
+        + json.dumps({"failed_at": 1_800_000_100.0, "error_code": "unavailable"}) + "\n"
+        + '{"partial'
+    )
+    monkeypatch.setattr(dlq, "DEFAULT_PATH", str(path))
+
+    assert cli.cmd_evaluations(SimpleNamespace(action="status", config=None)) == 0
+
+    status = json.loads(capsys.readouterr().out)
+    assert (status["turns_waiting"], status["error_codes"]) == (2, {"unavailable": 2})
+    assert status["oldest_failure"].startswith("2027-01-15T08:00:00")

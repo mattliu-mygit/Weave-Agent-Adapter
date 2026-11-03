@@ -2,7 +2,7 @@
 
     weave-agent-adapter hook --harness <name> --event <event>   # per hook event
     weave-agent-adapter sidecar                                  # receives hook events, sends sessions
-    weave-agent-adapter evaluations setup|replay|log-transcript    # CES session Cases
+    weave-agent-adapter evaluations setup|replay|log-transcript|status    # CES session Cases
 
 The hook lazily spawns the sidecar the first time the socket is unreachable, so
 running is zero-touch: the session-start event brings the sidecar up.
@@ -10,6 +10,7 @@ running is zero-touch: the session-start event brings the sidecar up.
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import os
 import select
@@ -18,6 +19,7 @@ import socket
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 
 from . import transport
 from .diagnostics import diagnose, open_diagnostic_stream
@@ -207,6 +209,28 @@ def _session_sender(cfg, redactor, profiles_dir=None):
         return None
 
 
+def _evaluations_status(path: str) -> int:
+    """Print how many turns wait in the dead-letter file, the oldest failure, and why."""
+    entries = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    entries.append(json.loads(line))
+                except ValueError:
+                    continue            # a line still being appended
+    except FileNotFoundError:
+        pass
+    oldest = min((e["failed_at"] for e in entries if isinstance(e.get("failed_at"), (int, float))), default=None)
+    print(json.dumps({
+        "dead_letter_file": path,
+        "turns_waiting": len(entries),
+        "oldest_failure": None if oldest is None else datetime.fromtimestamp(oldest, timezone.utc).isoformat(),
+        "error_codes": dict(collections.Counter(str(e.get("error_code")) for e in entries)),
+    }, indent=2))
+    return 0
+
+
 def cmd_evaluations(args) -> int:
     import urllib.parse
 
@@ -215,6 +239,8 @@ def cmd_evaluations(args) -> int:
     from .ces_writer import CesWriter
     from .config import load_config, load_evaluations_state, save_evaluations_state
 
+    if args.action == "status":
+        return _evaluations_status(dlq.DEFAULT_PATH)
     cfg = load_config(args.config)
     ev = cfg.evaluations
     try:
@@ -332,7 +358,7 @@ def main(argv=None) -> int:
 
     e = sub.add_parser("evaluations",
                        help="CES session Cases: set up the Dataset, replay the DLQ, log a transcript")
-    e.add_argument("action", choices=("setup", "replay", "log-transcript"))
+    e.add_argument("action", choices=("setup", "replay", "log-transcript", "status"))
     e.add_argument("--config")
     e.add_argument("--harness", choices=("codex", "claude-code"))   # log-transcript
     e.add_argument("--file")                                        # log-transcript: the session transcript
