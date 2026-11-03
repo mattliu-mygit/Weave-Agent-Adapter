@@ -1,0 +1,112 @@
+"""Hook events to turn jobs: turn sources, subagent turns, the sweep, and the DLQ."""
+from __future__ import annotations
+
+import json
+import time
+
+from weave_agent_adapter.ces import CesError
+from weave_agent_adapter.model import WireEvent
+from weave_agent_adapter.session_sender import SessionSender
+import codex_transcripts as ct
+
+
+class _Plain:
+    def scrub(self, value):
+        return value
+
+
+class _Writer:
+    def __init__(self, error=None):
+        self.jobs, self.error = [], error
+
+    def write_turn(self, job):
+        self.jobs.append(job)
+        if self.error:
+            raise self.error
+
+
+def _sender(tmp_path, writer, **kwargs):
+    return SessionSender(writer, str(tmp_path / "dlq.jsonl"), _Plain(), "1.2.3", **kwargs)
+
+
+def _event(event, at, **payload):
+    return WireEvent("codex", event, at, payload)
+
+
+def _finish(sender):
+    deadline = time.monotonic() + 5
+    while sender.has_active_work() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    sender.close()
+
+
+def test_a_stop_sends_its_turn_with_the_subagent_turns_it_ran(tmp_path):
+    parent = ct.write(tmp_path / "parent.jsonl", ct.parent_with_subagent())
+    child = ct.write(tmp_path / "child.jsonl", ct.subagent_fork())
+    writer = _Writer()
+    sender = _sender(tmp_path, writer)
+
+    sender.handle(_event("SessionStart", 1.0, session_id="T3", transcript_path=parent, cwd="/repo"))
+    sender.handle(_event("SubagentStop", 2.0, session_id="T3", agent_id="C1", transcript_path=child,
+                         agent_transcript_path=child, turn_id="K1"))
+    sender.handle(_event("Stop", 3.0, session_id="T3", transcript_path=parent, turn_id="P1"))
+    _finish(sender)
+
+    [job] = writer.jobs
+    assert (job["harness"], job["session_id"], job["session_case"]["input"]["kind"]) == ("codex", "T3", "session")
+    assert [(t["agent_id"], t["turn_id"]) for t in job["turns"]] == [(None, "P1"), ("C1", "K1")]
+
+
+def test_a_later_stop_does_not_resend_a_subagent_turn(tmp_path):
+    rows = ct.parent_with_subagent()
+    parent = ct.write(tmp_path / "parent.jsonl", rows)
+    child = ct.write(tmp_path / "child.jsonl", ct.subagent_fork())
+    writer = _Writer()
+    sender = _sender(tmp_path, writer)
+    sender.handle(_event("SubagentStop", 1.0, session_id="T3", agent_id="C1", agent_transcript_path=child, turn_id="K1"))
+    sender.handle(_event("Stop", 2.0, session_id="T3", transcript_path=parent, turn_id="P1"))
+    while sender.has_active_work():
+        time.sleep(0.01)
+    ct.write(tmp_path / "parent.jsonl", [*rows, ct.task_started(30, "P2"), ct.user(31, "thanks"),
+                                         ct.assistant(32, "Welcome."), ct.usage(33, "P2", "r3", 5, 5, 105),
+                                         ct.task_complete(34, "P2")])
+
+    sender.handle(_event("Stop", 3.0, session_id="T3", transcript_path=parent, turn_id="P2"))
+    _finish(sender)
+
+    assert [[t["turn_id"] for t in job["turns"]] for job in writer.jobs] == [["P1", "K1"], ["P2"]]
+
+
+def test_the_sweep_sends_an_interrupted_last_turn(tmp_path):
+    path = ct.write(tmp_path / "t.jsonl", ct.interrupted_then_next()[:6])
+    writer = _Writer()
+    sender = _sender(tmp_path, writer)
+
+    sender.handle(_event("UserPromptSubmit", 1.0, session_id="T2", transcript_path=path))
+    sender.sweep(now=10_000.0, ttl=60.0)
+    _finish(sender)
+
+    [job] = writer.jobs
+    assert job["turns"][0]["turn_id"] == "A1"
+    assert job["turns"][0]["cases"][0]["output"]["turn_status"] == "aborted"
+
+
+def test_a_failed_write_keeps_the_whole_job_in_one_dead_letter_line(tmp_path):
+    path = ct.write(tmp_path / "t.jsonl", ct.exec_turn())
+    writer = _Writer(error=CesError(503, "unavailable", "down"))
+    sender = _sender(tmp_path, writer)
+
+    sender.handle(_event("Stop", 1.0, session_id="T1", transcript_path=path, turn_id="U1"))
+    _finish(sender)
+
+    [line] = (tmp_path / "dlq.jsonl").read_text().splitlines()
+    entry = json.loads(line)
+    assert (entry["v"], entry["key"], entry["status"], entry["job"]) == (2, "turn-v1:codex:T1:U1", 503, writer.jobs[0])
+
+
+def test_only_harnesses_with_a_transcript_reader_are_handled(tmp_path):
+    sender = _sender(tmp_path, _Writer(), harnesses=("claude-code", "codex", "gemini-cli"))
+    try:
+        assert sender.harnesses == {"codex"}
+    finally:
+        sender.close()

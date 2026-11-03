@@ -2,6 +2,7 @@
 
     weave-agent-adapter hook --harness <name> --event <event>   # per hook event
     weave-agent-adapter sidecar [--project ...] [--debug-file ...]
+    weave-agent-adapter evaluations setup|replay                   # CES session Cases
 
 The hook lazily spawns the sidecar the first time the socket is unreachable, so
 running is zero-touch: the session-start event brings the sidecar up.
@@ -185,17 +186,103 @@ def cmd_sidecar(args) -> int:
         emitter = WeaveTurnEmitter()
 
     redactor = Redactor(deny_keys=cfg.redact_keys, enabled=cfg.redact_enabled)
+    # Debug runs write turns to a local file; they must not send to CES either.
+    session_sender = None if debug_file else _session_sender(cfg, redactor, args.profiles_dir)
     sc = Sidecar(project, transport.SOCKET_PATH, profiles_dir=args.profiles_dir,
                  idle_s=cfg.idle_shutdown_s, redactor=redactor, session_rate=cfg.session_rate,
                  session_ttl=cfg.session_ttl_s, project_per_repo=cfg.project_per_repo,
-                 emitter=emitter)
+                 emitter=emitter, session_sender=session_sender)
     signal.signal(signal.SIGTERM, lambda *_: sc.stop())
     signal.signal(signal.SIGINT, lambda *_: sc.stop())
     try:
         sc.serve()
     finally:
         sc.flush_emitter()
+        if session_sender:
+            session_sender.close()
     return 0
+
+
+def _session_sender(cfg, redactor, profiles_dir=None):
+    """The CES sender when `[evaluations]` is enabled and setup has run; else None."""
+    from . import __version__, dlq
+    from .ces import CesClient, api_key_for
+    from .ces_writer import CesWriter
+    from .config import load_evaluations_state
+    from .profile import load_profile
+    from .session_sender import SessionSender
+
+    ev = cfg.evaluations
+    if not ev.enabled:
+        return None
+    # Optional feature: nothing here may stop the sidecar from serving or tracing.
+    try:
+        state = load_evaluations_state()
+        if not state:
+            return None
+        if state.get("project") != ev.project or state.get("name") != ev.name:
+            diagnose("ces_config_mismatch")     # rerun `weave-agent-adapter evaluations setup`
+            return None
+        client = CesClient(ev.base_url, api_key_for(ev.wandb_base_url))
+        paths = {}
+        for harness in ev.harnesses:
+            try:
+                paths[harness] = (load_profile(harness, profiles_dir).config_surface or {}).get("paths")
+            except Exception:
+                pass                            # fingerprinting must never stop sending
+        return SessionSender(CesWriter(client, state["scope_ref"], state["dataset_id"]), dlq.DEFAULT_PATH,
+                             redactor, __version__, harnesses=ev.harnesses, config_paths=paths)
+    except Exception as exc:
+        diagnose("ces_config", error=exc)
+        return None
+
+
+def cmd_evaluations(args) -> int:
+    import urllib.parse
+
+    from . import dlq, records
+    from .ces import CesClient, CesError, api_key_for, project_internal_id
+    from .ces_writer import CesWriter
+    from .config import load_config, load_evaluations_state, save_evaluations_state
+
+    ev = load_config(args.config).evaluations
+    try:
+        api_key = api_key_for(ev.wandb_base_url)
+        client = CesClient(ev.base_url, api_key)
+        if args.action == "setup":
+            entity, _, project = ev.project.partition("/")
+            if not entity or not project:
+                print('set [evaluations].project = "entity/project" in config.toml', file=sys.stderr)
+                return 2
+            scope_ref = project_internal_id(ev.wandb_base_url, api_key, entity, project)
+            scope = f"/v1/namespaces/wandb/scopes/{urllib.parse.quote(scope_ref, safe='')}"
+            dataset = client.post(f"{scope}/datasets",
+                                  {"name": ev.name, "attributes": {"source": "weave-agent-adapter"}},
+                                  f"dataset-v1:{ev.project}:{ev.name}")
+            client.post(f"{scope}/datasets/{dataset['dataset_id']}/fields", {"fields": records.fields()})
+            state = {"project": ev.project, "name": ev.name, "scope_ref": scope_ref,
+                     "dataset_id": dataset["dataset_id"]}
+            save_evaluations_state(state)
+            print(json.dumps(state, indent=2))
+            return 0
+        state = load_evaluations_state()
+        if not state:
+            print("run `weave-agent-adapter evaluations setup` first", file=sys.stderr)
+            return 2
+        writer = CesWriter(client, state["scope_ref"], state["dataset_id"])
+        try:
+            result = dlq.replay(dlq.DEFAULT_PATH, lambda entry: writer.write_turn(entry["job"]))
+        except dlq.ReplayInProgress as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        print(json.dumps(result, indent=2))
+        if result["corrupt"]:
+            print(f"{result['corrupt']} unreadable line(s) set aside in {dlq.DEFAULT_PATH}.corrupt",
+                  file=sys.stderr)
+        return 0 if result["kept"] == 0 else 1
+    except CesError as exc:
+        print(f"evaluations {args.action} failed: {exc}", file=sys.stderr)
+        return 1
 
 
 def cmd_install(args) -> int:
@@ -236,6 +323,11 @@ def main(argv=None) -> int:
     s.add_argument("--debug-file")              # write the tree to a file instead of Weave
     s.add_argument("--profiles-dir")
     s.set_defaults(fn=cmd_sidecar)
+
+    e = sub.add_parser("evaluations", help="CES session Cases: set up the Dataset, replay the DLQ")
+    e.add_argument("action", choices=("setup", "replay"))
+    e.add_argument("--config")
+    e.set_defaults(fn=cmd_evaluations)
 
     for name, fn in (("install", cmd_install), ("uninstall", cmd_uninstall)):
         sp = sub.add_parser(name)

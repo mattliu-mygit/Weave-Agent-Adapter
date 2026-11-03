@@ -5,9 +5,10 @@ parsing needs `tomli` on Python < 3.11 (a sidecar-only dependency).
 """
 from __future__ import annotations
 
+import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 try:
     import tomllib as _toml            # py 3.11+
@@ -20,6 +21,9 @@ except ModuleNotFoundError:
 DEFAULT_PATH = os.path.expanduser(
     os.environ.get("WEAVE_AGENT_ADAPTER_CONFIG", "~/.weave-agent-adapter/config.toml")
 )
+# IDs written by `weave-agent-adapter evaluations setup`; the stdlib cannot write TOML.
+EVALUATIONS_STATE_PATH = os.path.expanduser(os.environ.get(
+    "WEAVE_AGENT_ADAPTER_EVALUATIONS_STATE", "~/.weave-agent-adapter/evaluations.json"))
 
 
 def resolve_project(configured: str, cwd=None, per_repo: bool = False) -> str:
@@ -33,6 +37,17 @@ def resolve_project(configured: str, cwd=None, per_repo: bool = False) -> str:
     return f"{entity}/{project}" if entity else project
 
 @dataclass
+class EvaluationsConfig:
+    """Where `[evaluations]` sends session Cases. Disabled unless configured."""
+    enabled: bool = False
+    base_url: str = "https://evaluations.wandb.ai"
+    wandb_base_url: str = "https://api.wandb.ai"      # authorizes CES; its ~/.netrc entry holds the key
+    project: str = ""                                 # "entity/project" on wandb_base_url
+    name: str = "agent-sessions"                      # the CES Dataset that holds the sessions
+    harnesses: tuple = ("claude-code", "codex", "gemini-cli")
+
+
+@dataclass
 class Config:
     project: str = "weave-agent-adapter"   # "entity/project" or bare "project"
     project_per_repo: bool = False         # trace each repo (cwd leaf) to its own project
@@ -41,6 +56,7 @@ class Config:
     session_rate: float = 1.0
     idle_shutdown_s: float = 120.0
     session_ttl_s: float = 3600.0          # drop sessions idle past this (crash safety)
+    evaluations: EvaluationsConfig = field(default_factory=EvaluationsConfig)
 
 
 def _load_file(path: str) -> dict:
@@ -72,4 +88,31 @@ def load_config(path=None) -> Config:
     c.idle_shutdown_s = float(os.environ.get("WEAVE_AGENT_ADAPTER_IDLE_S",
                                              side.get("idle_shutdown_s", c.idle_shutdown_s)))
     c.session_ttl_s = float(side.get("session_ttl_s", c.session_ttl_s))
+    ev = d.get("evaluations", {})
+    c.evaluations = EvaluationsConfig(
+        enabled=bool(ev.get("enabled", False)),
+        base_url=str(ev.get("base_url", EvaluationsConfig.base_url)),
+        wandb_base_url=str(ev.get("wandb_base_url", EvaluationsConfig.wandb_base_url)),
+        project=str(ev.get("project", "")),
+        name=str(ev.get("name", EvaluationsConfig.name)),
+        harnesses=tuple(ev.get("harnesses", EvaluationsConfig.harnesses)),
+    )
     return c
+
+
+def load_evaluations_state(path=None):
+    """`{"project", "name", "scope_ref", "dataset_id"}`, or None before setup."""
+    try:
+        with open(path or EVALUATIONS_STATE_PATH, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def save_evaluations_state(state: dict, path=None) -> None:
+    path = path or EVALUATIONS_STATE_PATH
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(state, fh, indent=2)
+    os.replace(tmp, path)

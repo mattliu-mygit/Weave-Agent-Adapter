@@ -249,6 +249,18 @@ The repository-local `.weave-agent-adapter/` directory is ignored by Git. It
 is separate from the user-level `~/.weave-agent-adapter/` directory that holds
 project configuration and diagnostics.
 
+## CES session Cases
+
+The sidecar can also write each finished turn to a CoreWeave Evaluations (CES) Dataset: a session Case, a session Trajectory, and one Case per user message, assistant message, tool call, and compaction. Codex is supported so far.
+
+```bash
+# config.toml: [evaluations] enabled = true, project = "entity/project"
+weave-agent-adapter evaluations setup    # create the Dataset, declare its fields, save its IDs
+weave-agent-adapter evaluations replay   # resend turns that failed, from the dead-letter file
+```
+
+See [specs/EVALUATIONS_CASE_CONTRACT.md](specs/EVALUATIONS_CASE_CONTRACT.md) for the layout, field contract, and write order.
+
 ## Add a harness
 
 Another JSON-on-stdin command-hook harness can be added with one TOML profile.

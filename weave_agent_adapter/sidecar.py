@@ -26,7 +26,7 @@ ACCEPT_TIMEOUT_S = 0.5
 class Sidecar:
     def __init__(self, project, socket_path, profiles_dir=None, idle_s=120.0,
                  redactor=None, session_rate=1.0, session_ttl=3600.0, sweep_interval=30.0,
-                 project_per_repo=False, emitter=None):
+                 project_per_repo=False, emitter=None, session_sender=None):
         self.project = project
         self.socket_path = socket_path
         self.profiles_dir = profiles_dir
@@ -35,6 +35,7 @@ class Sidecar:
         self.session_rate = session_rate
         self.project_per_repo = project_per_repo
         self.emitter = emitter
+        self.session_sender = session_sender  # CES session Cases; optional, independent of the tracer
         self.session_ttl = session_ttl        # drop sessions idle past this (crash safety)
         self.sweep_interval = sweep_interval
         self.tracers: dict = {}
@@ -83,8 +84,15 @@ class Sidecar:
             self._tracer_for(wire.harness).handle(wire)
         except Exception as exc:
             diagnose("wire_handle", harness=wire.harness, event=wire.event, error=exc)
+        if self.session_sender:
+            try:
+                self.session_sender.handle(wire)
+            except Exception as exc:
+                diagnose("ces_handle", harness=wire.harness, event=wire.event, error=exc)
 
     def has_active_work(self) -> bool:
+        if self.session_sender and self.session_sender.has_active_work():
+            return True
         return any(tr.has_active_work() for tr in self.tracers.values())
 
     def can_idle_exit(self, now: float) -> bool:
@@ -173,6 +181,11 @@ class Sidecar:
                 tr.sweep(now, ttl)
             except Exception:
                 pass
+        if self.session_sender:
+            try:
+                self.session_sender.sweep(now, ttl)
+            except Exception as exc:
+                diagnose("ces_sweep", error=exc)
 
     def stop(self) -> None:
         self._stop.set()
