@@ -13,6 +13,9 @@ SOCKET_PATH = os.path.expanduser(
     os.environ.get("WEAVE_AGENT_ADAPTER_SOCKET", "~/.weave-agent-adapter/sidecar.sock")
 )
 CONNECT_TIMEOUT_S = 0.25
+# The hook reads at most 1 MiB of payload, so the kernel can hold a whole event while the sidecar is busy.
+# macOS defaults to 8 KiB, which cut larger events off when the sidecar hadn't accepted yet.
+SEND_BUFFER_BYTES = 2 * 1024 * 1024
 
 
 def send(event: dict, socket_path: str = SOCKET_PATH) -> bool:
@@ -20,6 +23,7 @@ def send(event: dict, socket_path: str = SOCKET_PATH) -> bool:
     line = (json.dumps(event, default=str) + "\n").encode()
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SEND_BUFFER_BYTES)
             s.settimeout(CONNECT_TIMEOUT_S)
             s.connect(socket_path)
             s.sendall(line)
