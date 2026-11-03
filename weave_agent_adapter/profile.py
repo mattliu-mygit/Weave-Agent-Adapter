@@ -39,12 +39,10 @@ class Profile:
     fields: dict          # canonical field -> dotted path in payload
     registration: dict
     event_fields: dict = None  # native event -> canonical field overrides
-    thread: dict = None      # [thread]: how to derive the conversation id
     config_surface: dict = None   # [config_surface]: artifact paths hashed into config_version
 
     def __post_init__(self):
         self.event_fields = self.event_fields or {}
-        self.thread = self.thread or {}
         self.config_surface = self.config_surface or {}
 
     def canonical_event(self, native_event: str) -> Optional[str]:
@@ -77,7 +75,6 @@ class Profile:
                 event: dict(fields)
                 for event, fields in d.get("event_fields", {}).items()
             },
-            thread=dict(d.get("thread", {})),
             config_surface=dict(d.get("config_surface", {})),
         )
 

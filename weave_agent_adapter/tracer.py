@@ -18,10 +18,8 @@ running match by tool name and compatible input.
 """
 from __future__ import annotations
 
-import json
 
 from .config import session_sampled
-from .config_surface import config_version
 from .model import (
     OTHER_TRACE_ROLE,
     Decision,
@@ -91,14 +89,6 @@ class Tracer:
             harness=self.profile.name, transcript=f.get("transcript"), cwd=cwd,
             trace_role=f["trace_role"],
         )
-        if self.profile.thread.get("source") == "field":
-            s.thread_id = f.get(self.profile.thread.get("id_field"))
-        paths = self.profile.config_surface.get("paths")
-        if paths:
-            try:
-                s.config_version = config_version(paths, cwd=cwd)
-            except Exception:
-                pass                          # fingerprinting must never break tracing
         self.sessions[sid] = s
 
     def _on_session_end(self, sid, f, at) -> None:
@@ -163,7 +153,6 @@ class Tracer:
         t = s.current_turn
         if not t or t.ended_at is None:
             return False
-        self._thread_of(s)                    # resolve the conversation id once
         if self.emitter:
             try:
                 self.emitter.emit_turn(t, s)
@@ -179,37 +168,6 @@ class Tracer:
                 return True
         return False
 
-    def _thread_of(self, s: Session):
-        # The conversation id links forks/resumes. How to get it is per-harness,
-        # declared in the profile's [thread] section:
-        #   source = "field"            -> a [fields] value carries it (resolved at
-        #                                  session start); nothing to do here.
-        #   source = "transcript_root"  -> the id of the conversation's first message,
-        #                                  copied verbatim into every fork. Read the
-        #                                  transcript once: first row not skipped and
-        #                                  carrying id_key. Streamed + capped.
-        #   (absent / other)            -> no thread linking.
-        if s.thread_id is not None:
-            return s.thread_id
-        cfg = self.profile.thread
-        if cfg.get("source") == "transcript_root" and s.transcript:
-            skip_field = cfg.get("skip_field", "isSidechain")
-            id_key = cfg.get("id_key", "uuid")
-            try:
-                with open(s.transcript) as fh:
-                    for i, line in enumerate(fh):
-                        if i >= 50:           # bound the scan; the first message is at the top
-                            break
-                        line = line.strip()
-                        if not line:
-                            continue
-                        r = json.loads(line)
-                        if not r.get(skip_field) and r.get(id_key):
-                            s.thread_id = r.get(id_key)
-                            break
-            except Exception:
-                pass
-        return s.thread_id
 
     # ------- tools -------
 

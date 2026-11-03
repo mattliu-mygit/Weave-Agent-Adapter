@@ -6,7 +6,6 @@ from enum import Enum
 from typing import Optional
 
 SUPPORTED_WIRE_VERSION = 1
-TRACE_ROLE_ATTRIBUTE = "weave_agent_signals.trace_role"
 TRACE_ROLE_ENV = "WEAVE_AGENT_TRACE_ROLE"
 DEFAULT_TRACE_ROLE = "agent_session"
 OTHER_TRACE_ROLE = "other_system"
@@ -90,8 +89,6 @@ class Turn:
     steering: list = field(default_factory=list)
     compactions: list = field(default_factory=list)
     subagents: dict = field(default_factory=dict)
-    chat_calls: list = field(default_factory=list)
-    git_branch: Optional[str] = None
     effort_level: Optional[str] = None
     ended_at: Optional[float] = None
     incomplete: bool = False
@@ -104,7 +101,5 @@ class Session:
     harness: Optional[str] = None
     transcript: Optional[str] = None
     cwd: Optional[str] = None
-    thread_id: Optional[str] = None
-    config_version: Optional[str] = None
     current_turn: Optional[Turn] = None
     trace_role: str = DEFAULT_TRACE_ROLE

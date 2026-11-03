@@ -240,24 +240,6 @@ def test_session_autocreated_without_session_start():
     assert tools_of(turn, "Bash")
 
 
-def test_thread_id_from_transcript_root(tmp_path):
-    tp = tmp_path / "t.jsonl"
-    tp.write_text("\n".join([
-        json.dumps({"type": "queue-operation"}),                       # no uuid: skipped
-        json.dumps({"type": "user", "isSidechain": False, "parentUuid": None,
-                    "uuid": "ROOT-UUID", "message": {"role": "user", "content": "hi"}}),
-        json.dumps({"type": "assistant", "parentUuid": "ROOT-UUID"}),
-    ]))
-    tr, turns = run([
-        ("SessionStart", {"session_id": SID, "transcript_path": str(tp)}),
-        ("UserPromptSubmit", {"session_id": SID, "prompt": "hi", "transcript_path": str(tp)}),
-        ("Stop", {"session_id": SID}),
-        ("SessionEnd", {"session_id": SID}),
-    ])
-    (_, session), = turns
-    assert session.thread_id == "ROOT-UUID"
-
-
 def test_autocreated_session_creates_synthetic_turn_for_midturn_events():
     # sidecar restart: first event for this sid is a tool, not a turn_start;
     # a synthetic turn is created so the tool isn't dropped

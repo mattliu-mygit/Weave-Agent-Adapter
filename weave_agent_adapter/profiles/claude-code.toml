@@ -44,11 +44,6 @@ denial_reason = "reason"
 [event_fields.Stop]
 pending_work = "background_tasks"
 
-[thread]
-source     = "transcript_root"             # conversation id = first message's id in the transcript
-skip_field = "isSidechain"                 # skip subagent rows when finding the root
-id_key     = "uuid"                        # the row field to use as the conversation id
-
 [config_surface]
 # Deliberately-edited context artifacts that shape agent behavior, hashed into
 # weave_agent_adapter.config_version — the A/B cohort key for evaluating
