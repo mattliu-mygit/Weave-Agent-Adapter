@@ -1,7 +1,7 @@
 """Receive versioned wire events on a singleton Unix socket and send sessions to CES.
 
 The session sender turns Codex and Claude Code transcripts into CES Cases. A harness
-without a transcript reader gets a `Tracer` that builds its turns from hook events.
+without a transcript reader, such as Gemini CLI today, is not recorded.
 Singleton via an advisory `flock` (extra spawns fail the lock and exit); scales to
 zero after `idle_s` with no events.
 """
@@ -18,9 +18,7 @@ import time
 from . import transport
 from .model import DEFAULT_TRACE_ROLE, SUPPORTED_WIRE_VERSION, WireEvent, normalize_trace_role
 from .diagnostics import diagnose
-from .profile import load_profile
 from .session_sender import READERS
-from .tracer import Tracer
 
 ACCEPT_TIMEOUT_S = 0.5
 
@@ -29,31 +27,16 @@ ACCEPT_TIMEOUT_S = 0.5
 MAX_CONNECTION_BYTES = 4 * 1024 * 1024
 
 class Sidecar:
-    def __init__(self, socket_path, profiles_dir=None, idle_s=120.0, redactor=None,
-                 session_rate=1.0, session_ttl=3600.0, sweep_interval=30.0, session_sender=None):
+    def __init__(self, socket_path, idle_s=120.0, session_ttl=3600.0, sweep_interval=30.0,
+                 session_sender=None):
         self.socket_path = socket_path
-        self.profiles_dir = profiles_dir
         self.idle_s = idle_s
-        self.redactor = redactor
-        self.session_rate = session_rate
         self.session_sender = session_sender  # CES session Cases; None when [evaluations] is off
         self.session_ttl = session_ttl        # drop sessions idle past this (crash safety)
         self.sweep_interval = sweep_interval
-        self.tracers: dict = {}
         self._stop = threading.Event()
         self._lock_fd = None
         self._last = 0.0
-
-    def _tracer_for(self, harness: str) -> Tracer | None:
-        """The hook-built reducer for a harness without a transcript reader, else None."""
-        if harness in READERS:
-            return None
-        tr = self.tracers.get(harness)
-        if tr is None:
-            tr = Tracer(load_profile(harness, self.profiles_dir), redactor=self.redactor,
-                        session_rate=self.session_rate)
-            self.tracers[harness] = tr
-        return tr
 
     def _handle_line(self, raw: bytes) -> None:
         try:
@@ -81,13 +64,7 @@ class Sidecar:
         except Exception as exc:
             diagnose("wire_parse", error=exc)
             return
-        # one bad event or profile must never take down the sidecar
-        try:
-            tracer = self._tracer_for(wire.harness)
-            if tracer:
-                tracer.handle(wire)
-        except Exception as exc:
-            diagnose("wire_handle", harness=wire.harness, event=wire.event, error=exc)
+        # one bad event must never take down the sidecar
         if self.session_sender:
             try:
                 self.session_sender.handle(wire)
@@ -95,9 +72,7 @@ class Sidecar:
                 diagnose("ces_handle", harness=wire.harness, event=wire.event, error=exc)
 
     def has_active_work(self) -> bool:
-        if self.session_sender and self.session_sender.has_active_work():
-            return True
-        return any(tr.has_active_work() for tr in self.tracers.values())
+        return bool(self.session_sender and self.session_sender.has_active_work())
 
     def can_idle_exit(self, now: float) -> bool:
         return now - self._last > self.idle_s and not self.has_active_work()
@@ -181,11 +156,6 @@ class Sidecar:
 
     def _sweep(self, now: float, ttl: float = None) -> None:
         ttl = self.session_ttl if ttl is None else ttl
-        for tr in self.tracers.values():
-            try:
-                tr.sweep(now, ttl)
-            except Exception:
-                pass
         if self.session_sender:
             try:
                 self.session_sender.sweep(now, ttl)

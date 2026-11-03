@@ -7,10 +7,10 @@ from weave_agent_adapter.profile import Profile, load_profile
 def test_claude_code_event_mapping():
     p = load_profile("claude-code")
     assert p.name == "claude-code"
-    assert p.canonical_event("PreToolUse") == "tool_pre"
-    assert p.canonical_event("SubagentStop") == "subagent_stop"
-    assert p.canonical_event("PreCompact") == "compaction"
-    assert p.canonical_event("NoSuchEvent") is None
+    assert p.events["PreToolUse"] == "tool_pre"
+    assert p.events["SubagentStop"] == "subagent_stop"
+    assert p.events["PreCompact"] == "compaction"
+    assert "NoSuchEvent" not in p.events
 
 
 def test_field_extraction_resolves_dotted_paths():

@@ -3,8 +3,8 @@
 ## Purpose
 
 A profile translates one command-hook harness into the adapter's canonical
-event model. Adding a harness should require a TOML profile, not reducer or
-installer branches.
+event model. Adding a harness's hooks should require a TOML profile, not
+installer branches; recording its sessions also needs a transcript reader.
 
 The supported harness contract is intentionally narrow: the harness runs a
 command for lifecycle events and passes one JSON object on standard input.
@@ -70,7 +70,7 @@ Field values are dotted paths into the native payload. Optional fields are
 simply omitted when unavailable. `[event_fields.<NativeEvent>]` mappings add to
 or override `[fields]` for one native event; they select paths only and cannot
 run conditions, transforms, defaults, or code. Canonical fields currently used
-by the reducer or the session sender include session, prompt/reply, tool output or
+by the hook path or the session sender include session, prompt/reply, tool output or
 error, permission, subagent identity, transcript, compaction, pending work,
 working-directory, model, permission-mode, turn-ID, and effort data.
 
@@ -110,8 +110,8 @@ prints the note without adding harness-specific installer behavior.
 1. Verify its event names, JSON payload fields, settings location, and stable
    tool-call identifier from authoritative documentation or a private capture.
 2. Add the profile under `weave_agent_adapter/profiles/`.
-3. Add reducer integration tests covering the events the harness actually
-   emits and installer tests covering its registration path.
+3. Add installer tests covering its registration path, and hook tests covering
+   the events the harness actually emits.
 4. To send its sessions to CES, add a transcript reader and tests that drive a
    session through it.
 5. Document genuine degradation where the harness lacks an action.

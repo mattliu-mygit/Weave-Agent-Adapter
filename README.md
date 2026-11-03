@@ -171,9 +171,9 @@ Claude Code and Codex sessions are read from their transcripts, and the hooks
 add what the transcripts lack: permission prompts, the permission mode, and
 subagent transcript paths. Missing optional hook data degrades by omission.
 
-Gemini CLI's hooks register, and the sidecar builds its turns from hook events,
-but those turns aren't sent to CES yet, because Gemini's transcript format is
-unverified.
+Gemini CLI's hooks register, but its sessions aren't recorded yet: the sidecar
+ignores events from a harness without a transcript reader, and Gemini's
+transcript format is unverified.
 
 Claude Code's `PermissionDenied` hook covers auto-mode classifier denials, not
 denials made in the manual permission dialog.
@@ -292,6 +292,6 @@ python -m pip install -e ".[dev]"
 python -m pytest -q
 ```
 
-The suite covers reducer correlation and lifecycle, every registered hook,
+The suite covers the hook path and sidecar lifecycle, every registered hook,
 installer safety, privacy, the transcript readers, CES writes and retries, and
 the dead-letter file.

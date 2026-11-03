@@ -45,9 +45,6 @@ class Profile:
         self.event_fields = self.event_fields or {}
         self.config_surface = self.config_surface or {}
 
-    def canonical_event(self, native_event: str) -> Optional[str]:
-        return self.events.get(native_event)
-
     def extract(self, payload: dict, native_event: str = None) -> dict:
         mappings = dict(self.fields)
         if native_event:

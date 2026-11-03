@@ -218,8 +218,7 @@ def test_sidecar_command_serves_then_closes_the_session_sender(monkeypatch):
 
     assert cli.cmd_sidecar(SimpleNamespace(config=None, profiles_dir=None)) == 0
 
-    assert (built["idle_s"], built["session_rate"], built["session_ttl"], built["session_sender"]) == (
-        5.0, 0.5, 60.0, sender)
+    assert (built["idle_s"], built["session_ttl"], built["session_sender"]) == (5.0, 60.0, sender)
     assert sender.closed
 
 

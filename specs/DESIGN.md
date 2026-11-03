@@ -15,9 +15,8 @@ action beyond a short bounded local handoff. Hook, sidecar, and send failures
 never fail the harness.
 
 Claude Code, Codex, and Gemini CLI ship as declarative profiles. Claude Code
-and Codex sessions are read from their transcripts. Gemini CLI's turns are
-built from hook events by the reducer, and they are not sent to CES until its
-transcript format is verified. Another harness can use the same hook path when
+and Codex sessions are read from their transcripts. Gemini CLI's sessions are
+not recorded until a transcript reader for its verified format exists. Another harness can use the same hook path when
 it runs a command for lifecycle events and passes one JSON object on standard
 input.
 
@@ -43,13 +42,12 @@ The sidecar owns profile loading, field extraction, redaction, transcript
 reading, and CES writes. One sidecar multiplexes harnesses and sessions. The
 session sender keeps what the transcripts lack, such as permission prompts, the
 permission mode, and subagent transcript paths. When a turn ends, it hands a
-job to its worker thread. A harness without a transcript reader gets a reducer
-(`tracer.py`) that builds its turns from hook events instead.
+job to its worker thread. Events from a harness without a transcript reader are
+ignored.
 
 Profiles map native events and common or event-specific payload fields to a
-fixed canonical vocabulary. The reducer contains no harness names or native
-event names. Harnesses that omit an event or field lose only that detail rather
-than requiring alternate code paths.
+fixed canonical vocabulary. Harnesses that omit an event or field lose only
+that detail rather than requiring alternate code paths.
 
 ## State and lifecycle
 
