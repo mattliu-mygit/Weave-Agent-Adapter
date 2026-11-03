@@ -107,6 +107,26 @@ def test_a_failed_write_keeps_the_whole_job_in_one_dead_letter_line(tmp_path):
 def test_only_harnesses_with_a_transcript_reader_are_handled(tmp_path):
     sender = _sender(tmp_path, _Writer(), harnesses=("claude-code", "codex", "gemini-cli"))
     try:
-        assert sender.harnesses == {"codex"}
+        assert sender.harnesses == {"claude-code", "codex"}
     finally:
         sender.close()
+
+
+def test_a_claude_stop_sends_the_last_turn_with_its_subagent_turns(tmp_path):
+    import claude_transcripts as cl
+    session = cl.session_with_task(tmp_path)
+    with open(session) as fh:
+        first_turn = fh.readlines()[:7]                # the Stop fires before the second prompt exists
+    with open(session, "w") as fh:
+        fh.writelines(first_turn)
+    writer = _Writer()
+    sender = _sender(tmp_path, writer, harnesses=("claude-code",))
+
+    sender.handle(WireEvent("claude-code", "Stop", 1.0, {"session_id": cl.SESSION, "transcript_path": session,
+                                                         "background_tasks": ["bg-1"]}))
+    sender.handle(WireEvent("claude-code", "Stop", 2.0, {"session_id": cl.SESSION, "transcript_path": session}))
+    _finish(sender)
+
+    [job] = writer.jobs
+    assert job["harness"] == "claude-code"
+    assert [(t["agent_id"], t["turn_id"]) for t in job["turns"]] == [(None, "u1"), ("a1", "s1"), ("a2", "n1")]

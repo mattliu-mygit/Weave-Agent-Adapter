@@ -186,6 +186,6 @@ def test_session_sender_is_built_when_state_and_key_match(env):
     sender = cli._session_sender(_sender_cfg(fake), None)
     try:
         assert isinstance(sender, SessionSender)
-        assert sender.harnesses == {"codex"}
+        assert sender.harnesses == {"claude-code", "codex"}
     finally:
         sender.close()

@@ -1,0 +1,114 @@
+"""Claude Code transcripts to turn records: turns, merges, tool results, subagents, and interruptions."""
+from __future__ import annotations
+
+import os
+
+from weave_agent_adapter import claude_transcript as ct_reader, records
+from weave_agent_adapter.records import ToolFacts, TurnContext
+import claude_transcripts as ct
+
+TYPES = {"string": str, "integer": int, "boolean": bool, "json": (dict, list)}
+
+
+class _Plain:
+    def scrub(self, value):
+        return value
+
+
+def _ctx():
+    return TurnContext("claude-code", ct.SESSION, "default", "agent_session", "1.2.3", None)
+
+
+def _records(path, turn_id, facts=None):
+    t = ct_reader.load(path)
+    return ct_reader.turn_records(t, ct_reader.select_turn(t, turn_id), facts or {}, _ctx(), _Plain())
+
+
+def _subagent(session, agent):
+    return os.path.join(session[:-len(".jsonl")], "subagents", f"agent-{agent}.jsonl")
+
+
+def test_turns_start_at_prompts_and_not_at_tool_results_meta_rows_or_interruptions(tmp_path):
+    t = ct_reader.load(ct.session_with_task(tmp_path))
+
+    assert ct_reader.turn_ends(t) == [("u1", "completed"), ("u2", "aborted")]
+    assert ct_reader.select_turn(t, "u2").index == 2
+
+
+def test_rows_of_one_api_message_merge_into_one_assistant_message(tmp_path):
+    turn = _records(ct.session_with_task(tmp_path), "u1")
+
+    answers = [c for c in turn["cases"] if c["input"]["kind"] == "assistant_message"]
+    assert len(answers) == 2
+    first = answers[0]["output"]
+    assert (first["text"], first["reasoning"], first["finish_reason"]) == ("Asking a helper.", "Delegate it.", "tool_calls")
+    assert (first["input_tokens"], first["output_tokens"], first["cache_read_tokens"], first["cache_write_tokens"]) == (
+        100, 10, 50, 5)
+    assert answers[1]["output"]["finish_reason"] == "stop"
+
+
+def test_a_tool_use_pairs_with_its_result(tmp_path):
+    session = ct.session_with_task(tmp_path)
+    task = next(c for c in _records(session, "u1")["cases"] if c["input"]["kind"] == "tool_call")
+    denied = next(c for c in _records(session, "u2")["cases"] if c["input"]["kind"] == "tool_call")
+
+    assert (task["input"]["tool_name"], task["input"]["arguments"]) == ("Task", {"prompt": "count"})
+    assert {k: task["output"][k] for k in ("status", "output", "error", "duration_ms", "permission_decision")} == {
+        "status": "completed", "output": "3 files", "error": None, "duration_ms": 6, "permission_decision": None}
+    assert {k: denied["output"][k] for k in ("status", "error", "permission_decision")} == {
+        "status": "failed", "error": "permission denied", "permission_decision": "not_approved"}
+
+
+def test_hook_facts_win_over_the_transcript_permission(tmp_path):
+    turn = _records(ct.session_with_task(tmp_path), "u1",
+                    facts={"toolu_task": ToolFacts("Task", permission_requested=True, completed=True)})
+
+    task = next(c for c in turn["cases"] if c["input"]["kind"] == "tool_call")
+    assert task["output"]["permission_decision"] == "approved"
+
+
+def test_an_interrupted_turn_reads_aborted_and_a_compaction_is_a_case(tmp_path):
+    session = ct.session_with_task(tmp_path)
+    second = _records(session, "u2")
+    first = _records(session, "u1")
+
+    assert second["cases"][0]["output"]["turn_status"] == "aborted"
+    assert second["cases"][0]["output"]["turn_denial_count"] == 1
+    compactions = [c for c in first["cases"] if c["input"]["kind"] == "compaction"]
+    assert [c["input"]["trigger"] for c in compactions] == ["auto"]
+    assert first["cases"][0]["output"]["turn_compaction_count"] == 1
+    assert first["cases"][0]["output"]["turn_input_tokens"] == 300
+
+
+def test_nested_subagents_name_their_task_calls_and_parents(tmp_path):
+    session = ct.session_with_task(tmp_path)
+    main = _records(session, "u1")
+    a1 = _records(_subagent(session, "a1"), "s1")
+    a2 = _records(_subagent(session, "a2"), "n1")
+
+    assert main["cases"][main["spawns"]["a1"]]["input"]["call_id"] == "toolu_task"
+    assert (a1["agent_id"], a1["parent_agent_id"]) == ("a1", None)
+    assert a1["cases"][a1["spawns"]["a2"]]["input"]["call_id"] == "toolu_nested"
+    assert (a2["agent_id"], a2["parent_agent_id"]) == ("a2", "a1")
+    assert (a1["cases"][0]["input"]["kind"], a1["cases"][0]["input"]["text"]) == ("user_message", "count")
+    assert ct_reader.subagent_paths(ct_reader.load(session)) == [_subagent(session, "a1"), _subagent(session, "a2")]
+
+
+def test_every_case_emits_exactly_its_declared_keys_and_types(tmp_path):
+    session = ct.session_with_task(tmp_path)
+    turns = [_records(session, "u1"), _records(session, "u2"), _records(_subagent(session, "a1"), "s1")]
+
+    for case in (c for turn in turns for c in turn["cases"]):
+        kind = case["input"]["kind"]
+        assert set(case["input"]) == {*records.COMMON_INPUT, *records.MEMBER_INPUT, *records.KIND_INPUT[kind]}
+        totals = records.TURN_TOTALS if case["input"]["step_index"] == 0 else {}
+        assert set(case["output"]) == {*records.KIND_OUTPUT[kind], *totals}
+        for values, declared in ((case["input"], records.INPUT_FIELDS), (case["output"], records.OUTPUT_FIELDS)):
+            for name, value in values.items():
+                if value is not None:
+                    expected = TYPES[declared[name]]
+                    assert isinstance(value, expected) and not (expected is int and isinstance(value, bool)), name
+    t = ct_reader.load(session)
+    session_case = ct_reader.session_case(t, ct_reader.select_turn(t, "u1"), _ctx())
+    assert set(session_case["input"]) == {*records.COMMON_INPUT, *records.SESSION_INPUT}
+    assert (session_case["input"]["cwd"], session_case["input"]["model"]) == ("/repo", "claude-test")

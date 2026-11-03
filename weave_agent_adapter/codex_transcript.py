@@ -353,3 +353,16 @@ def turn_records(t: Transcript, turn: TurnRecords, facts: dict, ctx: TurnContext
     return records.turn(ctx, turn_id=turn.turn_id, turn_index=turn.index, agent_id=agent_id,
                         parent_agent_id=parent_thread if parent_thread and parent_thread != ctx.session_id else None,
                         context=_context(t, turn), steps=steps, totals=totals, redactor=redactor)
+
+
+def thread_id(t: Transcript):
+    return _str(t.meta.get("id"))
+
+
+def parent_thread_id(t: Transcript):
+    return _str(t.meta.get("parent_thread_id"))
+
+
+def subagent_paths(t: Transcript) -> list:
+    """Codex names subagent transcripts in SubagentStop events, not beside the session file."""
+    return []

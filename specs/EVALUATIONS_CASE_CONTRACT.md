@@ -52,7 +52,7 @@ Each request's Idempotency-Key comes from what it writes, and a replay sends a b
 | `PATCH .../datasets/{d}/cases` | that subagent's Cases for the turn | `turn-v1:{harness}:{session_id}:{agent_turn_id}` |
 
 - **The session file**, `~/.weave-agent-adapter/evaluations-sessions/{harness}-{session_id}.json`, keeps the session Case, S, and subagent IDs. Each body is saved before it is sent, so after a crash between sending and saving, the stored body is resent and CES returns the original ID.
-- **Subagent turns** are written with the parent turn that ran them, parents first. Codex's `SubagentStop` names the subagent's transcript, and the parent's `Stop` sends its finished turns.
+- **Subagent turns** are written with the parent turn that ran them, parents first. Codex's `SubagentStop` names the subagent's transcript, Claude Code keeps them in the session's `subagents` directory, and the parent's `Stop` sends their finished turns. A Claude Code `Stop` with background tasks still running sends nothing.
 - **Retries:** the client retries network errors, 429, and 5xx three times, honoring `Retry-After`.
 - **Dead letters:** a turn that still fails is one line in `~/.weave-agent-adapter/evaluations-dlq.jsonl` holding the whole turn job (format v2). `weave-agent-adapter evaluations replay` reruns each job from the top.
 - **409 `idempotency_key_reuse`** on a turn counts as already stored.
@@ -71,4 +71,4 @@ project = "entity/project"      # required
 
 `weave-agent-adapter evaluations setup` resolves the project's `scope_ref` through GraphQL, creates the Dataset (key `dataset-v1:{project}:{name}`), declares the fields, and writes `{project, name, scope_ref, dataset_id}` to `~/.weave-agent-adapter/evaluations.json`. The sidecar sends nothing until that file matches the config.
 
-Codex is the only harness with a transcript reader so far. Claude Code and Gemini CLI events are ignored until their readers land.
+Codex and Claude Code have transcript readers. Claude Code turns run from one user prompt to the next, its assistant rows merge by `message.id`, and a subagent file's `.meta.json` `toolUseId` names the Task call its Trajectory starts from. Gemini CLI events are ignored until its reader lands.

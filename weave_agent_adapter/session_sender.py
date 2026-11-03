@@ -5,10 +5,12 @@ transcript lacks (permission prompts, permission mode, subagent transcript paths
 and say when a turn has ended. One worker thread reads the transcripts, builds the
 turn job, and writes it with `CesWriter`. A job that still fails goes to the DLQ.
 
-Codex is the only harness with a transcript reader so far. Its turn sources are a
-`Stop` that carries a `turn_id` and the idle sweep, for a last turn that ended with
-`turn_aborted`. A `SubagentStop` names the subagent's transcript, and the parent
-turn's job carries that subagent's finished turns.
+Codex and Claude Code have transcript readers. A `Stop` ends a turn: Codex's names
+it with `turn_id`, and Claude Code's ends the transcript's last turn unless
+background tasks are still running. The idle sweep sends a last turn that was
+interrupted. A parent turn's job carries the finished turns of its subagents:
+Codex names their transcripts in `SubagentStop`, and Claude Code keeps them in the
+session's `subagents` directory.
 """
 from __future__ import annotations
 
@@ -17,13 +19,15 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from . import codex_transcript, dlq, records
+from . import claude_transcript, codex_transcript, dlq, records
 from .config_surface import config_version
 from .diagnostics import diagnose
 from .model import DEFAULT_TRACE_ROLE
 from .records import ToolFacts, TurnContext
 
-READERS = {"codex"}
+READERS = {"codex": codex_transcript, "claude-code": claude_transcript}
+COMPLETED = ("task_complete", "completed")
+INTERRUPTED = ("turn_aborted", "aborted")
 # Codex writes a turn's task_complete record 35-50 ms after the Stop hook fires (Stop
 # hooks can keep a turn going, so the end is recorded after they return). A Stop job
 # waits this long for the record. Raise the bound if diagnostics show
@@ -48,10 +52,11 @@ class _Session:
 @dataclass
 class _Job:
     transcript: str
-    turn_id: str | None          # None: sweep job, send the last turn if it was interrupted
+    turn_id: str | None          # None: the transcript's last turn
     agents: list
     ctx: TurnContext
     facts: dict
+    sweep: bool = False          # send the last turn only if it was interrupted
 
 
 class SessionSender:
@@ -61,7 +66,7 @@ class SessionSender:
         self.dlq_path = dlq_path
         self.redactor = redactor
         self.adapter_version = adapter_version
-        self.harnesses = set(harnesses) & READERS
+        self.harnesses = set(harnesses) & set(READERS)
         self.config_paths = config_paths or {}
         self.sessions: dict = {}
         self._queue: queue.Queue = queue.Queue()
@@ -102,14 +107,15 @@ class SessionSender:
         if wire.event == "SubagentStop" and p.get("agent_transcript_path"):
             if p["agent_transcript_path"] not in s.agents:
                 s.agents.append(p["agent_transcript_path"])
-        elif wire.event == "Stop" and s.transcript and p.get("turn_id"):
-            self._enqueue(sid, s, p["turn_id"])
+        elif (wire.event == "Stop" and s.transcript and not p.get("background_tasks")
+              and (p.get("turn_id") or wire.harness != "codex")):
+            self._enqueue(sid, s, p.get("turn_id"))
 
     def sweep(self, now: float, ttl: float) -> None:
         for sid in [sid for sid, s in self.sessions.items() if now - s.last_activity > ttl]:
             s = self.sessions.pop(sid)
             if s.transcript:
-                self._enqueue(sid, s, None)
+                self._enqueue(sid, s, None, sweep=True)
 
     def has_active_work(self) -> bool:
         with self._lock:
@@ -138,7 +144,7 @@ class SessionSender:
             self._queue.put(None)           # so the worker still exits when its write returns
             self._thread.join(5.0)
 
-    def _enqueue(self, sid: str, s: _Session, turn_id) -> None:
+    def _enqueue(self, sid: str, s: _Session, turn_id, sweep: bool = False) -> None:
         if s.config_version is None and self.config_paths.get(s.harness):
             s.config_version = config_version(self.config_paths[s.harness], cwd=s.cwd)
         ctx = TurnContext(s.harness, sid, s.permission_mode, s.trace_role, self.adapter_version,
@@ -147,7 +153,7 @@ class SessionSender:
                  for k, v in s.tools.items()}
         with self._lock:
             self._pending += 1
-        self._queue.put(_Job(s.transcript, turn_id, list(s.agents), ctx, facts))
+        self._queue.put(_Job(s.transcript, turn_id, list(s.agents), ctx, facts, sweep))
 
     # ------- worker thread -------
 
@@ -167,28 +173,29 @@ class SessionSender:
             with self._lock:
                 self._pending -= 1
 
-    def _turns_to_send(self, t, job: _Job) -> list:
-        ends = codex_transcript.turn_ends(t)
+    def _turns_to_send(self, t, job: _Job, reader) -> list:
+        ends = reader.turn_ends(t)
         ids = [turn_id for turn_id, _ in ends]
-        thread_id = t.meta.get("id")
-        if job.turn_id is None:
-            # Sweep: only a last turn that was interrupted (Codex sends no Stop for it).
-            return [ends[-1][0]] if ends and ends[-1][1] == "turn_aborted" else []
-        if job.turn_id not in ids:
+        thread_id = reader.thread_id(t)
+        if job.sweep:
+            # Only a last turn that was interrupted, which gets no Stop.
+            return [ends[-1][0]] if ends and ends[-1][1] in INTERRUPTED else []
+        target = job.turn_id or (ids[-1] if ids else None)
+        if target not in ids:
             diagnose("ces_turn_missing", harness=job.ctx.harness)
             return []
         # Interrupted turns get no Stop, so send unsent ones just before this turn first.
         earlier = []
-        for turn_id, end in reversed(ends[:ids.index(job.turn_id)]):
-            if end == "task_complete" or (thread_id, turn_id) in self._sent:
+        for turn_id, end in reversed(ends[:ids.index(target)]):
+            if end in COMPLETED or (thread_id, turn_id) in self._sent:
                 break
             earlier.append(turn_id)
-        return [*reversed(earlier), job.turn_id]
+        return [*reversed(earlier), target]
 
-    def _load(self, job: _Job):
-        """Load the transcript. For a Stop job, wait for its turn's end record."""
-        t = codex_transcript.load(job.transcript)
-        if job.turn_id is None:
+    def _load(self, job: _Job, reader):
+        """Load the transcript. For a Codex Stop job, wait for its turn's end record."""
+        t = reader.load(job.transcript)
+        if reader is not codex_transcript or job.turn_id is None:
             return t
         deadline = time.monotonic() + END_RECORD_WAIT_S
         while (dict(codex_transcript.turn_ends(t)).get(job.turn_id) is None
@@ -200,15 +207,15 @@ class SessionSender:
             diagnose("ces_end_record_timeout", harness=job.ctx.harness)
         return t
 
-    def _agent_turns(self, job: _Job) -> list:
+    def _agent_turns(self, job: _Job, t, reader) -> list:
         """Finished, unsent subagent turns as ((thread_id, turn_id), job turn), parents first."""
         loaded = []
-        for path in job.agents:
+        for path in dict.fromkeys([*job.agents, *reader.subagent_paths(t)]):
             try:
-                loaded.append(codex_transcript.load(path))
+                loaded.append(reader.load(path))
             except (OSError, ValueError) as error:
                 diagnose("ces_agent_transcript", harness=job.ctx.harness, error=error)
-        parents = {a.meta.get("id"): a.meta.get("parent_thread_id") for a in loaded}
+        parents = {reader.thread_id(a): reader.parent_thread_id(a) for a in loaded}
 
         def depth(thread, seen=()):
             parent = parents.get(thread)
@@ -216,29 +223,31 @@ class SessionSender:
 
         found = []
         for a in loaded:
-            thread = a.meta.get("id")
-            for turn_id, end in codex_transcript.turn_ends(a):
+            thread = reader.thread_id(a)
+            for turn_id, end in reader.turn_ends(a):
                 if end is None or (thread, turn_id) in self._sent:
                     continue
-                turn = codex_transcript.select_turn(a, turn_id)
+                turn = reader.select_turn(a, turn_id)
                 found.append((depth(thread), records.ms(turn.rows[0].get("timestamp")) or 0, (thread, turn_id),
-                              codex_transcript.turn_records(a, turn, job.facts, job.ctx, self.redactor)))
+                              reader.turn_records(a, turn, job.facts, job.ctx, self.redactor)))
         found.sort(key=lambda f: (f[0], f[1]))
         return [(key, turn) for _, _, key, turn in found]
 
     def _process(self, job: _Job) -> None:
-        t = self._load(job)
-        thread_id = t.meta.get("id")
-        pending = [turn_id for turn_id in self._turns_to_send(t, job) if (thread_id, turn_id) not in self._sent]
+        reader = READERS[job.ctx.harness]
+        t = self._load(job, reader)
+        thread_id = reader.thread_id(t)
+        pending = [turn_id for turn_id in self._turns_to_send(t, job, reader)
+                   if (thread_id, turn_id) not in self._sent]
         if not pending:
             return
-        first = codex_transcript.select_turn(t, codex_transcript.turn_ends(t)[0][0])
-        session_case = codex_transcript.session_case(t, first, job.ctx)
+        first = reader.select_turn(t, reader.turn_ends(t)[0][0])
+        session_case = reader.session_case(t, first, job.ctx)
         for number, turn_id in enumerate(pending):
-            turn = codex_transcript.select_turn(t, turn_id)
-            agents = self._agent_turns(job) if number == len(pending) - 1 else []
+            turn = reader.select_turn(t, turn_id)
+            agents = self._agent_turns(job, t, reader) if number == len(pending) - 1 else []
             body = {"harness": job.ctx.harness, "session_id": job.ctx.session_id, "session_case": session_case,
-                    "turns": [codex_transcript.turn_records(t, turn, job.facts, job.ctx, self.redactor),
+                    "turns": [reader.turn_records(t, turn, job.facts, job.ctx, self.redactor),
                               *(agent_turn for _, agent_turn in agents)]}
             self._write(body, f"turn-v1:{job.ctx.harness}:{job.ctx.session_id}:{turn_id}")
             self._sent.add((thread_id, turn_id))

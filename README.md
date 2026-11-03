@@ -251,7 +251,7 @@ project configuration and diagnostics.
 
 ## CES session Cases
 
-The sidecar can also write each finished turn to a CoreWeave Evaluations (CES) Dataset: a session Case, a session Trajectory, and one Case per user message, assistant message, tool call, and compaction. Codex is supported so far.
+The sidecar can also write each finished turn to a CoreWeave Evaluations (CES) Dataset: a session Case, a session Trajectory, and one Case per user message, assistant message, tool call, and compaction. Codex and Claude Code are supported so far.
 
 ```bash
 # config.toml: [evaluations] enabled = true, project = "entity/project"
