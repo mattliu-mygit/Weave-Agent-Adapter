@@ -112,3 +112,20 @@ def test_every_case_emits_exactly_its_declared_keys_and_types(tmp_path):
     session_case = ct_reader.session_case(t, ct_reader.select_turn(t, "u1"), _ctx())
     assert set(session_case["input"]) == {*records.COMMON_INPUT, *records.SESSION_INPUT}
     assert (session_case["input"]["cwd"], session_case["input"]["model"]) == ("/repo", "claude-test")
+
+
+def test_a_system_notification_is_not_a_turn_and_a_later_typed_message_steers(tmp_path):
+    path = ct.write(tmp_path / "S1.jsonl", [
+        {**ct.prompt(1, "u1", "first"), "turnPosition": {"promptIndex": 0, "turnIndex": 1}},
+        {**ct.prompt(2, "n1", "<task-notification>done</task-notification>"),
+         "promptSource": "system", "origin": {"kind": "task-notification"}},
+        {**ct.prompt(3, "u1b", "also this"), "turnPosition": {"promptIndex": 1, "turnIndex": 1}},
+        ct.assistant(4, "a-1", "msg_1", [ct.text("ok")], stop_reason="end_turn"),
+    ])
+    t = ct_reader.load(path)
+
+    assert ct_reader.turn_ends(t) == [("u1", "completed")]
+    turn = _records(path, "u1")
+    users = [c["input"] for c in turn["cases"] if c["input"]["kind"] == "user_message"]
+    assert [(u["text"], u["steering"]) for u in users] == [("first", False), ("also this", True)]
+    assert turn["cases"][0]["output"]["turn_steering_count"] == 1

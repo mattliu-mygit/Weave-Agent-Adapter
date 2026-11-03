@@ -114,14 +114,22 @@ def _counts(t: Transcript, row: dict) -> bool:
     return t.agent_id is not None or not row.get("isSidechain")
 
 
-def _is_prompt(t: Transcript, row: dict) -> bool:
+def _is_typed(t: Transcript, row: dict) -> bool:
+    """A message a person or SDK caller sent, not a tool result or a system notification."""
     if row.get("type") != "user" or row.get("isMeta") or row.get("isCompactSummary") or not _counts(t, row):
+        return False
+    if row.get("promptSource") == "system" or (row.get("origin") or {}).get("kind"):
         return False
     content = _content(row)
     if isinstance(content, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
         return False
     text = _text(content)
     return bool(text) and not text.startswith(INTERRUPTED)
+
+
+def _is_prompt(t: Transcript, row: dict) -> bool:
+    """The first typed message of a turn. A later one (`promptIndex` > 0) steers the running turn."""
+    return _is_typed(t, row) and not (row.get("turnPosition") or {}).get("promptIndex")
 
 
 def _end(t: Transcript, rows: list) -> str | None:
@@ -199,10 +207,11 @@ def _spawned_by(t: Transcript) -> dict:
 def turn_records(t: Transcript, turn: TurnRecords, facts: dict, ctx: TurnContext, redactor) -> dict:
     """One turn of this file as a job turn for `CesWriter.write_turn`."""
     rows, steps = turn.rows, []
-    prompt = rows[0]
-    started = records.ms(prompt.get("timestamp"))
-    steps.append(records.step("user_message", started, started, 0,
-                              {"text": records.cap(_text(_content(prompt)))[0], "steering": False}, {}))
+    typed = [(position, row) for position, row in enumerate(rows) if _is_typed(t, row)]
+    for number, (position, row) in enumerate(typed):
+        started = records.ms(row.get("timestamp"))
+        steps.append(records.step("user_message", started, started, position,
+                                  {"text": records.cap(_text(_content(row)))[0], "steering": number > 0}, {}))
 
     messages = {}
     for position, row in enumerate(rows):
@@ -277,7 +286,7 @@ def turn_records(t: Transcript, turn: TurnRecords, facts: dict, ctx: TurnContext
         "turn_status": turn.end_type or "incomplete",
         "turn_duration_ms": stamps[-1] - stamps[0] if stamps else None,
         **{f"turn_{k}_tokens": v for k, v in totals_tokens.items()}, "turn_reasoning_tokens": None,
-        "turn_steering_count": 0,
+        "turn_steering_count": max(0, len(typed) - 1),
         "turn_denial_count": sum(1 for out in tools if out["permission_decision"] == "not_approved"),
         "turn_tool_error_count": sum(1 for out in tools if out["error"] is not None),
         "turn_compaction_count": compactions,

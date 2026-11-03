@@ -26,8 +26,6 @@ from .model import DEFAULT_TRACE_ROLE
 from .records import ToolFacts, TurnContext
 
 READERS = {"codex": codex_transcript, "claude-code": claude_transcript}
-COMPLETED = ("task_complete", "completed")
-INTERRUPTED = ("turn_aborted", "aborted")
 # Codex writes a turn's task_complete record 35-50 ms after the Stop hook fires (Stop
 # hooks can keep a turn going, so the end is recorded after they return). A Stop job
 # waits this long for the record. Raise the bound if diagnostics show
@@ -177,20 +175,22 @@ class SessionSender:
         ends = reader.turn_ends(t)
         ids = [turn_id for turn_id, _ in ends]
         thread_id = reader.thread_id(t)
+        written = self.writer.written_turns(job.ctx.harness, job.ctx.session_id)
         if job.sweep:
-            # Only a last turn that was interrupted, which gets no Stop.
-            return [ends[-1][0]] if ends and ends[-1][1] in INTERRUPTED else []
-        target = job.turn_id or (ids[-1] if ids else None)
-        if target not in ids:
-            diagnose("ces_turn_missing", harness=job.ctx.harness)
+            # The session went idle, so every turn is final. This sends a last turn that was
+            # interrupted, or whose Stop came while background tasks still ran.
+            target = ids[-1] if ids else None
+        else:
+            target = job.turn_id or (ids[-1] if ids else None)
+            if target not in ids:
+                diagnose("ces_turn_missing", harness=job.ctx.harness)
+                return []
+        if target is None:
             return []
-        # Interrupted turns get no Stop, so send unsent ones just before this turn first.
-        earlier = []
-        for turn_id, end in reversed(ends[:ids.index(target)]):
-            if end in COMPLETED or (thread_id, turn_id) in self._sent:
-                break
-            earlier.append(turn_id)
-        return [*reversed(earlier), target]
+        # A turn can end without a Stop that sends it: an interrupted turn gets none, and a
+        # Claude Code Stop with background tasks pending is skipped. Send those first.
+        return [turn_id for turn_id in ids[:ids.index(target) + 1]
+                if turn_id not in written and (thread_id, turn_id) not in self._sent]
 
     def _load(self, job: _Job, reader):
         """Load the transcript. For a Codex Stop job, wait for its turn's end record."""

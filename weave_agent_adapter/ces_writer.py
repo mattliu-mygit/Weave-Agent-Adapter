@@ -69,11 +69,15 @@ class CesWriter:
                 if not already_stored(error):
                     raise
                 diagnose("ces_already_stored", harness=harness)
-                continue
-            for spawned, index in turn["spawns"].items():
+                result = None
+            for spawned, index in turn["spawns"].items() if result else ():
                 state["agent_roots"].setdefault(spawned, result["case_ids"][index])
-            if turn["spawns"]:
-                self._save(harness, sid, state)
+            state["turns"].append(turn["turn_id"])
+            self._save(harness, sid, state)
+
+    def written_turns(self, harness: str, sid: str) -> set:
+        """Turn IDs this session's file records as written, so a restart does not resend them."""
+        return set(self._load(harness, sid)["turns"])
 
     def _session_trajectory(self, job: dict, state: dict) -> str:
         harness, sid = job["harness"], job["session_id"]
@@ -107,6 +111,7 @@ class CesWriter:
             state = {}
         for name in ("session_case", "session_trajectory", "agents", "agent_roots"):
             state.setdefault(name, {})
+        state.setdefault("turns", [])
         return state
 
     def _save(self, harness: str, sid: str, state: dict) -> None:

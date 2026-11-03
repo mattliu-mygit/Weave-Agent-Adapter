@@ -24,6 +24,9 @@ class _Writer:
         if self.error:
             raise self.error
 
+    def written_turns(self, harness, session_id):
+        return set()
+
 
 def _sender(tmp_path, writer, **kwargs):
     return SessionSender(writer, str(tmp_path / "dlq.jsonl"), _Plain(), "1.2.3", **kwargs)
@@ -130,3 +133,35 @@ def test_a_claude_stop_sends_the_last_turn_with_its_subagent_turns(tmp_path):
     [job] = writer.jobs
     assert job["harness"] == "claude-code"
     assert [(t["agent_id"], t["turn_id"]) for t in job["turns"]] == [(None, "u1"), ("a1", "s1"), ("a2", "n1")]
+
+
+def test_a_turn_whose_stop_waited_on_background_tasks_goes_with_the_next_turn(tmp_path):
+    import claude_transcripts as cl
+    first = [cl.prompt(1, "u1", "start a slow job"),
+             cl.assistant(2, "a-1", "msg_1", [cl.text("Started in the background.")], stop_reason="end_turn")]
+    path = cl.write(tmp_path / f"{cl.SESSION}.jsonl", first)
+    writer = _Writer()
+    sender = _sender(tmp_path, writer, harnesses=("claude-code",))
+    sender.handle(WireEvent("claude-code", "Stop", 1.0, {"session_id": cl.SESSION, "transcript_path": path,
+                                                         "background_tasks": ["bg-1"]}))
+    cl.write(tmp_path / f"{cl.SESSION}.jsonl", [
+        *first, {**cl.prompt(3, "n1", "<task-notification>done</task-notification>"),
+                 "promptSource": "system", "origin": {"kind": "task-notification"}},
+        cl.prompt(4, "u2", "say hi"), cl.assistant(5, "a-2", "msg_2", [cl.text("hi")], stop_reason="end_turn")])
+
+    sender.handle(WireEvent("claude-code", "Stop", 2.0, {"session_id": cl.SESSION, "transcript_path": path}))
+    _finish(sender)
+
+    assert [[t["turn_id"] for t in job["turns"]] for job in writer.jobs] == [["u1"], ["u2"]]
+
+
+def test_the_sweep_sends_a_finished_turn_no_stop_sent(tmp_path):
+    path = ct.write(tmp_path / "t.jsonl", ct.exec_turn())
+    writer = _Writer()
+    sender = _sender(tmp_path, writer)
+
+    sender.handle(_event("UserPromptSubmit", 1.0, session_id="T1", transcript_path=path))
+    sender.sweep(now=10_000.0, ttl=60.0)
+    _finish(sender)
+
+    assert [job["turns"][0]["turn_id"] for job in writer.jobs] == ["U1"]
