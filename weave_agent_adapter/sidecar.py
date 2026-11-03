@@ -24,6 +24,9 @@ from .tracer import Tracer
 ACCEPT_TIMEOUT_S = 0.5
 
 
+
+MAX_CONNECTION_BYTES = 4 * 1024 * 1024
+
 class Sidecar:
     def __init__(self, socket_path, profiles_dir=None, idle_s=120.0, redactor=None,
                  session_rate=1.0, session_ttl=3600.0, sweep_interval=30.0, session_sender=None):
@@ -144,6 +147,8 @@ class Sidecar:
                             if not chunk:
                                 break
                             buf += chunk
+                            if len(buf) > MAX_CONNECTION_BYTES:
+                                break       # hook events are at most 1 MiB; drop a runaway sender
                     except OSError:
                         pass
                     for line in buf.split(b"\n"):

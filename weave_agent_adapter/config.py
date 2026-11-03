@@ -67,6 +67,14 @@ def _load_file(path: str) -> dict:
         return {}
 
 
+def _number(value, default: float) -> float:
+    """A numeric setting, or its default when missing or unreadable, so a typo can't stop the sidecar."""
+    try:
+        return default if value is None else float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def load_config(path=None) -> Config:
     d = _load_file(path or DEFAULT_PATH)
     red = d.get("redaction", {})
@@ -76,10 +84,10 @@ def load_config(path=None) -> Config:
 
     c.redact_enabled = bool(red.get("enabled", c.redact_enabled))
     c.redact_keys = red.get("redact_keys", None)
-    c.session_rate = float(samp.get("session_rate", c.session_rate))
-    c.idle_shutdown_s = float(os.environ.get("WEAVE_AGENT_ADAPTER_IDLE_S",
-                                             side.get("idle_shutdown_s", c.idle_shutdown_s)))
-    c.session_ttl_s = float(side.get("session_ttl_s", c.session_ttl_s))
+    c.session_rate = _number(samp.get("session_rate"), c.session_rate)
+    c.idle_shutdown_s = _number(os.environ.get("WEAVE_AGENT_ADAPTER_IDLE_S", side.get("idle_shutdown_s")),
+                                c.idle_shutdown_s)
+    c.session_ttl_s = _number(side.get("session_ttl_s"), c.session_ttl_s)
     ev = d.get("evaluations", {})
     c.evaluations = EvaluationsConfig(
         enabled=bool(ev.get("enabled", False)),

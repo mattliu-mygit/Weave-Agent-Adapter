@@ -330,7 +330,7 @@ def transcript_jobs(reader, t, ctx: TurnContext, redactor) -> list:
     for number, turn_id in enumerate(turn_ids):
         turns = [reader.turn_records(t, reader.select_turn(t, turn_id), {}, ctx, redactor)]
         if number == len(turn_ids) - 1:
-            turns += [turn for _, turn in agent_turns(reader, t, [], {}, ctx, redactor)]
+            turns += [turn for _, turn in agent_turns(reader, t, [], {}, ctx, redactor, final=True)]
         body = {"harness": ctx.harness, "session_id": ctx.session_id, "session_case": session_case,
                 "turns": turns}
         jobs.append((f"turn-v1:{ctx.harness}:{ctx.session_id}:{turn_id}", body))

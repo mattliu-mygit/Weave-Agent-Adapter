@@ -226,7 +226,10 @@ def _spawned_by(t: Transcript) -> dict:
         except (OSError, ValueError):
             continue
         if call:
-            spawned[call] = load(path[:-len(".meta.json")] + ".jsonl").agent_id
+            try:
+                spawned[call] = load(path[:-len(".meta.json")] + ".jsonl").agent_id
+            except (OSError, ValueError):
+                continue            # a subagent file missing or mid-write must not fail the turn
     return spawned
 
 

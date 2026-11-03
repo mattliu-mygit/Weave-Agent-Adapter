@@ -104,7 +104,7 @@ def _ensure_sidecar(deadline: float = 0.5) -> bool:
         log_stream = open_diagnostic_stream()
         subprocess.Popen(
             [sys.executable, "-m", "weave_agent_adapter", "sidecar"],
-            start_new_session=True, stdout=subprocess.DEVNULL, stderr=log_stream,
+            start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=log_stream,
         )
     except Exception as exc:
         diagnose("sidecar_spawn", error=exc)

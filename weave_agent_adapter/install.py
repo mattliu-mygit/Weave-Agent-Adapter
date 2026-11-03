@@ -91,7 +91,8 @@ def _entry(command: str, ev: str) -> dict:
 def install(harness: str, user: bool = True, profiles_dir=None, path=None) -> str:
     reg = load_profile(harness, profiles_dir).registration
     command, events = _resolved_command(reg["command"]), reg.get("events", [])
-    path = path or _target_path(reg, user)
+    # Resolve symlinks so a settings file kept in a dotfiles repo stays a link.
+    path = os.path.realpath(path or _target_path(reg, user))
     data = _read_json(path)
     hooks = data.setdefault("hooks", {})
     for ev in events:
@@ -104,7 +105,7 @@ def install(harness: str, user: bool = True, profiles_dir=None, path=None) -> st
 
 def uninstall(harness: str, user: bool = True, profiles_dir=None, path=None) -> str:
     reg = load_profile(harness, profiles_dir).registration
-    path = path or _target_path(reg, user)
+    path = os.path.realpath(path or _target_path(reg, user))
     data = _read_json(path)
     hooks = data.get("hooks", {})
     for ev in list(hooks.keys()):

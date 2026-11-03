@@ -48,10 +48,6 @@ class Profile:
     def canonical_event(self, native_event: str) -> Optional[str]:
         return self.events.get(native_event)
 
-    def field(self, payload: dict, canonical: str) -> Any:
-        path = self.fields.get(canonical)
-        return _dig(payload, path) if path else None
-
     def extract(self, payload: dict, native_event: str = None) -> dict:
         mappings = dict(self.fields)
         if native_event:
