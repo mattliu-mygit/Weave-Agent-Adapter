@@ -13,7 +13,7 @@ session Case ── root of ──> session Trajectory S
 
 - **The session Case** holds the session's first-turn facts. It is written once and never changes.
 - **Member Cases** carry `trajectory_id` (S, or their subagent's Trajectory) and `session_trajectory_id` (always S), so a reader can find the session from any Case.
-- **A turn's Cases** share `turn_id`. The turn's first Case, its user message, has `step_index` 0 and carries the turn totals, and it is the Case that takes the turn's Scores.
+- **A turn's Cases** share `turn_id`. The turn's first Case by start time has `step_index` 0, carries the turn totals, and takes the turn's Scores. It is usually the user message; a turn that starts without a prompt starts with a reply or a tool call.
 - **Codex operations**, the commands an exec tool runs, fold into their `tool_call` Case as `exit_code`, `error`, and `duration_ms`.
 
 ## Field contract
