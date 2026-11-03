@@ -81,7 +81,7 @@ def select_turn(t: Transcript, turn_id: str) -> TurnRecords | None:
     index, start = 0, None
     for i, row in enumerate(own):
         started = event(row, "task_started")
-        if started:
+        if started and started.get("turn_id"):
             index += 1
             if started.get("turn_id") == turn_id:
                 start = i
@@ -91,7 +91,7 @@ def select_turn(t: Transcript, turn_id: str) -> TurnRecords | None:
     end_at, end, end_type = len(own) - 1, None, None
     for i in range(start + 1, len(own)):
         next_start = event(own[i], "task_started")
-        if next_start and next_start.get("turn_id") != turn_id:
+        if next_start and next_start.get("turn_id") and next_start.get("turn_id") != turn_id:
             end_at = i - 1          # killed turn: its rows stop before the next turn begins
             break
         for kind in TURN_ENDS:

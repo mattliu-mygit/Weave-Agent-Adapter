@@ -216,7 +216,9 @@ def _evaluations_status(path: str) -> int:
         with open(path, encoding="utf-8") as fh:
             for line in fh:
                 try:
-                    entries.append(json.loads(line))
+                    entry = json.loads(line)
+                    if isinstance(entry, dict):
+                        entries.append(entry)
                 except ValueError:
                     continue            # a line still being appended
     except FileNotFoundError:

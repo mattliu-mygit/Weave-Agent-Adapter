@@ -108,6 +108,9 @@ class SessionSender:
         if wire.event == "SubagentStop" and p.get("agent_transcript_path"):
             if p["agent_transcript_path"] not in s.agents:
                 s.agents.append(p["agent_transcript_path"])
+            if s.transcript:
+                # Send the finished subagent now, not at the parent's next Stop or the idle sweep.
+                self._enqueue(sid, s, None, sweep=True)
         elif (wire.event == "Stop" and s.transcript and not p.get("background_tasks")
               and (p.get("turn_id") or wire.harness != "codex")):
             self._enqueue(sid, s, p.get("turn_id"))
@@ -221,7 +224,8 @@ class SessionSender:
         # _sent, because the writer defers a subagent whose launching turn isn't written yet.
         written = self.writer.written_turns(job.ctx.harness, job.ctx.session_id)
         return [(key, turn) for key, turn in
-                agent_turns(reader, t, job.agents, job.facts, job.ctx, self.redactor, self._sent)
+                agent_turns(reader, t, job.agents, job.facts, job.ctx, self.redactor, self._sent,
+                            final=job.final)
                 if key[1] not in written]
 
     def _process(self, job: _Job) -> None:
@@ -285,7 +289,7 @@ def _turn_open(t, job: _Job, reader):
     return ends[turn_id] is None if turn_id in ends else None
 
 
-def agent_turns(reader, t, paths, facts, ctx, redactor, sent=frozenset()) -> list:
+def agent_turns(reader, t, paths, facts, ctx, redactor, sent=frozenset(), final=False) -> list:
     """Finished, unsent subagent turns as ((thread_id, turn_id), job turn), parents first."""
     loaded = []
     for path in dict.fromkeys([*paths, *reader.subagent_paths(t)]):
@@ -303,7 +307,7 @@ def agent_turns(reader, t, paths, facts, ctx, redactor, sent=frozenset()) -> lis
     for a in loaded:
         thread = reader.thread_id(a)
         for turn_id, end in reader.turn_ends(a):
-            if end is None or (thread, turn_id) in sent:
+            if (end is None and not final) or (thread, turn_id) in sent:
                 continue
             turn = reader.select_turn(a, turn_id)
             found.append((depth(thread), records.ms(turn.rows[0].get("timestamp")) or 0, (thread, turn_id),
@@ -321,6 +325,7 @@ def transcript_jobs(reader, t, ctx: TurnContext, redactor) -> list:
     if not turn_ids:
         return []
     session_case = reader.session_case(t, reader.select_turn(t, turn_ids[0]), ctx)
+    session_case = {**session_case, "input": {k: redactor.scrub(v) for k, v in session_case["input"].items()}}
     jobs = []
     for number, turn_id in enumerate(turn_ids):
         turns = [reader.turn_records(t, reader.select_turn(t, turn_id), {}, ctx, redactor)]
