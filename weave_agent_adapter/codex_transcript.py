@@ -65,7 +65,7 @@ def turn_ends(t: Transcript) -> list:
     order, ends = [], {}
     for row in t.rows[t.history_start:]:
         started = event(row, "task_started")
-        if started and started.get("turn_id") not in ends:
+        if started and started.get("turn_id") and started["turn_id"] not in ends:
             order.append(started.get("turn_id"))
             ends[started.get("turn_id")] = None
         for kind in TURN_ENDS:

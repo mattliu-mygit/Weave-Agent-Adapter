@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 from weave_agent_adapter.ces import CesError
 from weave_agent_adapter.model import WireEvent
 from weave_agent_adapter.session_sender import SessionSender
+import claude_transcripts as cl
 import codex_transcripts as ct
 
 
@@ -58,6 +60,20 @@ def test_a_stop_sends_its_turn_with_the_subagent_turns_it_ran(tmp_path):
     [job] = writer.jobs
     assert (job["harness"], job["session_id"], job["session_case"]["input"]["kind"]) == ("codex", "T3", "session")
     assert [(t["agent_id"], t["turn_id"]) for t in job["turns"]] == [(None, "P1"), ("C1", "K1")]
+
+
+def test_a_claude_code_stop_waits_briefly_for_its_turn_to_end(tmp_path):
+    rows = [cl.prompt(1000, "u1", "hi"), cl.assistant(2000, "a1", "m1", [cl.text("hello")], stop_reason="end_turn")]
+    path = cl.write(tmp_path / "s.jsonl", rows[:1])
+    writer = _Writer()
+    sender = _sender(tmp_path, writer, harnesses=("claude-code",))
+    threading.Timer(0.3, cl.write, (tmp_path / "s.jsonl", rows)).start()
+
+    sender.handle(WireEvent("claude-code", "Stop", 1.0, {"session_id": "S1", "transcript_path": path}))
+    _finish(sender)
+
+    [job] = writer.jobs
+    assert any(case["output"].get("turn_status") == "completed" for case in job["turns"][0]["cases"])
 
 
 class _WrittenWriter(_Writer):

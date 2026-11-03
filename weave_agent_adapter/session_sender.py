@@ -195,17 +195,15 @@ class SessionSender:
                 if turn_id not in written and (thread_id, turn_id) not in self._sent]
 
     def _load(self, job: _Job, reader):
-        """Load the transcript. For a Codex Stop job, wait for its turn's end record."""
+        """Load the transcript. A Stop job waits briefly for its turn to be written as ended."""
         t = reader.load(job.transcript)
-        if reader is not codex_transcript or job.turn_id is None:
+        if job.sweep:
             return t
         deadline = time.monotonic() + END_RECORD_WAIT_S
-        while (dict(codex_transcript.turn_ends(t)).get(job.turn_id) is None
-               and time.monotonic() < deadline
+        while (_turn_open(t, job, reader) is not False and time.monotonic() < deadline
                and not self._abort.wait(END_RECORD_POLL_S)):
-            t = codex_transcript.load(job.transcript)
-        ends = dict(codex_transcript.turn_ends(t))
-        if job.turn_id in ends and ends[job.turn_id] is None:
+            t = reader.load(job.transcript)
+        if _turn_open(t, job, reader):
             diagnose("ces_end_record_timeout", harness=job.ctx.harness)
         return t
 
@@ -261,6 +259,15 @@ class SessionSender:
         finally:
             with self._lock:
                 self._inflight = None
+
+
+def _turn_open(t, job: _Job, reader):
+    """Whether a Stop job's turn is still unended, or None while the transcript lacks it.
+
+    A Codex Stop names its turn; a Claude Code Stop ends the transcript's last turn."""
+    ends = dict(reader.turn_ends(t))
+    turn_id = job.turn_id if job.turn_id is not None else next(reversed(ends), None)
+    return ends[turn_id] is None if turn_id in ends else None
 
 
 def agent_turns(reader, t, paths, facts, ctx, redactor, sent=frozenset()) -> list:
