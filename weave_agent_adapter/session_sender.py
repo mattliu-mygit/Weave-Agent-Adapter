@@ -217,6 +217,8 @@ class SessionSender:
         return t
 
     def _agent_turns(self, job: _Job, t, reader) -> list:
+        # Subagent turns are deduplicated by what the session file records as written, not by
+        # _sent, because the writer defers a subagent whose launching turn isn't written yet.
         written = self.writer.written_turns(job.ctx.harness, job.ctx.session_id)
         return [(key, turn) for key, turn in
                 agent_turns(reader, t, job.agents, job.facts, job.ctx, self.redactor, self._sent)
@@ -247,14 +249,12 @@ class SessionSender:
                                         *(agent_turn for _, agent_turn in riders)]}
             self._write(body, f"turn-v1:{job.ctx.harness}:{job.ctx.session_id}:{turn_id}")
             self._sent.add((thread_id, turn_id))
-            self._sent.update(key for key, _ in riders)
         if not pending:
             # Subagent turns that finished after their parent's last turn was sent go on their own,
             # each under its own key, because the parent turn's key already holds another body.
             for key, agent_turn in agents:
                 self._write({**prefix, "turns": [agent_turn]},
                             f"turn-v1:{job.ctx.harness}:{job.ctx.session_id}:{key[1]}")
-                self._sent.add(key)
 
     def _write(self, job: dict, key: str) -> None:
         with self._lock:

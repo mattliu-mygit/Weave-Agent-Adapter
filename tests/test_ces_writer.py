@@ -135,17 +135,18 @@ def test_a_crash_after_sending_resends_the_stored_session_body(fake, tmp_path):
     assert (fake.requests[0][1]["Idempotency-Key"], fake.requests[0][2]) == ("session-v1:codex:T3", stored)
 
 
-def test_a_subagent_whose_spawn_was_not_seen_hangs_off_the_session_case(fake, tmp_path, monkeypatch):
+def test_a_subagent_whose_launching_turn_was_not_written_waits_for_it(fake, tmp_path, monkeypatch):
     seen = []
     monkeypatch.setattr(ces_writer, "diagnose", lambda phase, **_: seen.append(phase))
     job = _job(tmp_path)
     job["turns"][0]["spawns"] = {}
+    writer = _writer(fake, tmp_path)
 
-    _writer(fake, tmp_path).write_turn(job)
+    writer.write_turn(job)
 
-    subagent = next(body for _, h, body in fake.requests if h["Idempotency-Key"] == "subagent-v1:codex:T3:C1")
-    assert subagent["trajectories"][0]["root_case_id"] == "case-1-0"
-    assert seen == ["ces_subagent_root_missing"]
+    assert "subagent-v1:codex:T3:C1" not in _keys(fake.requests)
+    assert seen == ["ces_subagent_deferred"]
+    assert writer.written_turns("codex", "T3") == {"P1"}
 
 
 def test_written_turns_survive_a_restart(fake, tmp_path):

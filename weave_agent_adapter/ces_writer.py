@@ -62,10 +62,12 @@ class CesWriter:
             agent = turn["agent_id"]
             if agent is not None and agent not in state["agents"]:
                 root = state["agent_roots"].get(agent)
-                if root is None:
-                    diagnose("ces_subagent_root_missing", harness=harness)
-                    root = state["session_case"]["id"]
-                parent = state["agents"].get(turn["parent_agent_id"]) or s
+                parent = s if turn["parent_agent_id"] is None else state["agents"].get(turn["parent_agent_id"])
+                if root is None or parent is None:
+                    # CES roots a subagent's Trajectory at a Case of its parent's Trajectory, so the
+                    # subagent waits until the turn that launched it is written; a later job sends it.
+                    diagnose("ces_subagent_deferred", harness=harness)
+                    continue
                 key = f"subagent-v1:{harness}:{sid}:{agent}"
                 body = {"trajectories": [self._trajectory(
                     {"name": f"{harness} subagent {agent}", "root_case_id": root, "parent_trajectory_id": parent},

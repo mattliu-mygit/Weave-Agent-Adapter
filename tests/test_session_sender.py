@@ -27,7 +27,7 @@ class _Writer:
             raise self.error
 
     def written_turns(self, harness, session_id):
-        return set()
+        return set() if self.error else {turn["turn_id"] for job in self.jobs for turn in job["turns"]}
 
 
 def _sender(tmp_path, writer, **kwargs):

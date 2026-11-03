@@ -1,11 +1,19 @@
 """Shared test helpers: drive the tracer with wire events, observe emitted turns."""
 from __future__ import annotations
 
+import pytest
+
 from weave_agent_adapter.model import WireEvent
 from weave_agent_adapter.profile import load_profile
 from weave_agent_adapter.tracer import Tracer
 
 NS = "weave_agent_adapter"
+
+
+@pytest.fixture(autouse=True)
+def _private_diagnostics_log(tmp_path, monkeypatch):
+    """Keep test runs out of the user's real adapter.log."""
+    monkeypatch.setenv("WEAVE_AGENT_ADAPTER_LOG", str(tmp_path / "adapter.log"))
 
 
 class CapturingEmitter:
