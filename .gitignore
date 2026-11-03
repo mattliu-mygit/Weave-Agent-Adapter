@@ -211,5 +211,6 @@ __marimo__/
 .claude/settings.local.json
 
 # Local development artifacts
+.weave-agent-adapter/
 wvenv/
 *.sock

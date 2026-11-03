@@ -220,6 +220,35 @@ For advanced setups, `WANDB_ENTITY` or `[weave].entity` supplies the entity
 when `project` is bare. `WEAVE_PROJECT` overrides the configured project.
 `WEAVE_AGENT_ADAPTER_DISABLE=1` disables hook forwarding.
 
+### Workspace trace role
+
+Every trace root carries `weave_agent_signals.trace_role`. Normal coding-agent
+work defaults to `agent_session`. A workspace can persist another role in the
+ignored file `.weave-agent-adapter/trace-role`, containing one of:
+
+- `agent_session`
+- `signal_evaluation`
+- `judge_evaluation`
+- `reflection_evaluation`
+- `other_system`
+
+For example:
+
+```bash
+mkdir -p .weave-agent-adapter
+printf '%s\n' 'judge_evaluation' > .weave-agent-adapter/trace-role
+```
+
+The hook uses `WEAVE_AGENT_TRACE_ROLE` when it is non-empty; otherwise it looks
+for the nearest workspace selector while walking from the event's working
+directory through the nearest Git repository root. Outside a Git repository it
+checks only the event's working directory. With neither source it uses
+`agent_session`. Unknown explicit values fail safe to `other_system`.
+
+The repository-local `.weave-agent-adapter/` directory is ignored by Git. It
+is separate from the user-level `~/.weave-agent-adapter/` directory that holds
+project configuration and diagnostics.
+
 ## Add a harness
 
 Another JSON-on-stdin command-hook harness can be added with one TOML profile.

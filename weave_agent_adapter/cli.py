@@ -20,6 +20,8 @@ import time
 
 from . import transport
 from .diagnostics import diagnose, open_diagnostic_stream
+from .profile import load_profile
+from .trace_role import resolve_trace_role
 
 
 def _read_stdin(timeout: float = 0.5, max_bytes: int = 1_048_576) -> str:
@@ -70,6 +72,13 @@ def _hook_result(args) -> int:
     if getattr(args, "success_json", False):
         print("{}")
     return 0
+
+
+def _event_cwd(harness: str, event: str, payload: dict):
+    try:
+        return load_profile(harness).extract(payload, event).get("cwd")
+    except Exception:
+        return None
 
 
 def _append_private_jsonl(path: str, record: dict) -> None:
@@ -142,6 +151,9 @@ def cmd_hook(args) -> int:
         event = {
             "v": 1, "harness": args.harness, "event": args.event,
             "captured_at": captured_at, "payload": payload,
+            "trace_role": resolve_trace_role(
+                _event_cwd(args.harness, args.event, payload)
+            ),
         }
         if not transport.send(event):
             if _ensure_sidecar():

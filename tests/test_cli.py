@@ -92,6 +92,83 @@ def test_captured_at_is_hook_entry_time_not_post_read_time(monkeypatch):
     assert sent[0]["captured_at"] == 10.0
 
 
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        (None, "agent_session"),
+        ("judge_evaluation", "judge_evaluation"),
+        ("future_role", "other_system"),
+    ],
+)
+def test_hook_forwards_validated_trace_role(tmp_path, monkeypatch, configured, expected):
+    sent = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_read_stdin", lambda **_kwargs: '{"session_id":"s"}')
+    monkeypatch.setattr(cli.transport, "send", lambda event: sent.append(event) or True)
+    if configured is None:
+        monkeypatch.delenv("WEAVE_AGENT_TRACE_ROLE", raising=False)
+    else:
+        monkeypatch.setenv("WEAVE_AGENT_TRACE_ROLE", configured)
+
+    assert cli.cmd_hook(argparse.Namespace(harness="codex", event="SessionStart")) == 0
+
+    assert sent[0]["trace_role"] == expected
+
+
+def _write_workspace_role(directory, value):
+    path = directory / ".weave-agent-adapter" / "trace-role"
+    path.parent.mkdir(parents=True)
+    path.write_text(value)
+
+
+def test_hook_uses_profile_cwd_for_workspace_trace_role(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    process_cwd = tmp_path / "process"
+    workspace.mkdir()
+    process_cwd.mkdir()
+    _write_workspace_role(workspace, "judge_evaluation")
+    _write_workspace_role(process_cwd, "signal_evaluation")
+    sent = []
+    monkeypatch.chdir(process_cwd)
+    monkeypatch.delenv("WEAVE_AGENT_TRACE_ROLE", raising=False)
+    monkeypatch.setattr(
+        cli,
+        "_read_stdin",
+        lambda **_kwargs: json.dumps({"session_id": "s", "cwd": str(workspace)}),
+    )
+    monkeypatch.setattr(cli.transport, "send", lambda event: sent.append(event) or True)
+
+    assert cli.cmd_hook(argparse.Namespace(harness="codex", event="SessionStart")) == 0
+
+    assert sent[0]["trace_role"] == "judge_evaluation"
+
+
+def test_hook_without_payload_cwd_uses_process_workspace(tmp_path, monkeypatch):
+    _write_workspace_role(tmp_path, "reflection_evaluation")
+    sent = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("WEAVE_AGENT_TRACE_ROLE", raising=False)
+    monkeypatch.setattr(cli, "_read_stdin", lambda **_kwargs: '{"session_id":"s"}')
+    monkeypatch.setattr(cli.transport, "send", lambda event: sent.append(event) or True)
+
+    assert cli.cmd_hook(argparse.Namespace(harness="codex", event="SessionStart")) == 0
+
+    assert sent[0]["trace_role"] == "reflection_evaluation"
+
+
+def test_missing_profile_falls_back_to_process_workspace(tmp_path, monkeypatch):
+    _write_workspace_role(tmp_path, "signal_evaluation")
+    sent = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("WEAVE_AGENT_TRACE_ROLE", raising=False)
+    monkeypatch.setattr(cli, "_read_stdin", lambda **_kwargs: '{"session_id":"s"}')
+    monkeypatch.setattr(cli.transport, "send", lambda event: sent.append(event) or True)
+
+    assert cli.cmd_hook(argparse.Namespace(harness="missing", event="SessionStart")) == 0
+
+    assert sent[0]["trace_role"] == "signal_evaluation"
+
+
 def test_ensure_sidecar_has_one_short_deadline(monkeypatch):
     monkeypatch.setattr(cli, "_sidecar_up", lambda: False)
     monkeypatch.setattr(cli.subprocess, "Popen", lambda *args, **kwargs: object())

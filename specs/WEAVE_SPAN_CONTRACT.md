@@ -16,6 +16,15 @@ LLM child so the reply is not hidden in root input. Custom
 session ID, working directory, incomplete state, configuration version, branch,
 effort, compaction metadata, and filterable steering, denial, tool-error, and
 compaction counts when available.
+The root also carries `weave_agent_signals.trace_role`. Hook processes prefer a
+non-empty `WEAVE_AGENT_TRACE_ROLE` launch value, then the nearest ignored
+workspace selector at `.weave-agent-adapter/trace-role`, walking upward from
+the event working directory through the nearest Git repository root. Outside a
+Git repository, only the event working directory is checked. With neither
+source, the role is `agent_session`. Recognized evaluator values are preserved;
+unknown explicit values or roles that conflict within one session fail safe to
+`other_system`. The role classifies the trace without changing its Weave
+identity.
 An explicitly observed turn model populates the typed root when no LLM child
 provides one; observed native turn IDs and permission modes remain namespaced
 attributes rather than being reinterpreted as cross-harness identifiers.
