@@ -196,3 +196,45 @@ def test_a_reused_key_on_a_spawning_turn_reads_back_its_case_ids(fake, tmp_path)
     subagent = next(body for _, h, body in fake.requests if h.get("Idempotency-Key") == "subagent-v1:codex:T3:C1")
     launch = parent["cases"][parent["spawns"]["C1"]]["input"]["step_index"]
     assert subagent["trajectories"][0]["root_case_id"] == f"stored-{launch}"
+
+
+def test_a_spawning_turn_whose_case_ids_could_not_be_read_back_roots_its_subagent_later(fake, tmp_path):
+    job = _job(tmp_path)
+    parent, child = job["turns"]
+    answer = fake.respond
+    reads = []
+
+    def respond(method, path, headers, body):
+        if headers.get("Idempotency-Key") == "turn-v1:codex:T3:P1":
+            return 409, {}, {"error": {"code": "idempotency_key_reuse", "message": "scripted"}}
+        if method == "GET" and "/trajectories/" in path:
+            reads.append(path)
+            if len(reads) <= 2:  # the read-back after the 409, and this job's retry
+                return 503, {}, {"error": {"code": "unavailable", "message": "scripted"}}
+            stored = [{"case_id": f"stored-{c['input']['step_index']}",
+                       "input": {"turn_id": "P1", "step_index": c["input"]["step_index"]}} for c in parent["cases"]]
+            return 200, {}, {"cases": stored, "next_cursor": None}
+        return answer(method, path, headers, body)
+    fake.respond = respond
+    writer = _writer(fake, tmp_path)
+
+    writer.write_turn({**job, "turns": [parent, child]})
+    assert "subagent-v1:codex:T3:C1" not in _keys(fake.requests)
+
+    writer.write_turn({**job, "turns": [child]})
+
+    subagent = next(body for _, h, body in fake.requests if h.get("Idempotency-Key") == "subagent-v1:codex:T3:C1")
+    launch = parent["cases"][parent["spawns"]["C1"]]["input"]["step_index"]
+    assert subagent["trajectories"][0]["root_case_id"] == f"stored-{launch}"
+
+
+def test_a_final_job_raises_for_a_subagent_that_still_waits(fake, tmp_path):
+    job = _job(tmp_path)
+    job["turns"][0]["spawns"] = {}
+    writer = _writer(fake, tmp_path)
+
+    with pytest.raises(ces_writer.SubagentDeferred) as raised:
+        writer.write_turn(job, final=True)
+
+    assert raised.value.code == "subagent_deferred"
+    assert writer.written_turns("codex", "T3") == {"P1"}

@@ -14,6 +14,8 @@ The main thread's turn comes first, then subagent turns, parents first.
 """
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
 import re
@@ -42,6 +44,17 @@ def already_stored(error) -> bool:
     return getattr(error, "status", None) == 409 and getattr(error, "code", None) == "idempotency_key_reuse"
 
 
+class SubagentDeferred(Exception):
+    """Subagent turns still wait for the Case IDs of the turn that launched them, and no later
+    job will retry them, so the job goes to the dead-letter file for `evaluations replay`."""
+    status = None
+    code = "subagent_deferred"
+
+    def __init__(self, turn_ids: list):
+        super().__init__(f"{len(turn_ids)} subagent turn(s) wait for the turn that launched them")
+        self.turn_ids = turn_ids
+
+
 class CesWriter:
     def __init__(self, client, scope_ref: str, dataset_id: str, state_dir: str | None = None,
                  namespace: str = "wandb", rollout_context: bool = False):
@@ -54,20 +67,31 @@ class CesWriter:
         self.rollout_context = rollout_context
         self.state_dir = state_dir or DEFAULT_STATE_DIR
 
-    def write_turn(self, job: dict) -> None:
-        """Raises the CesError of the first request that fails; the caller keeps the whole job."""
+    def write_turn(self, job: dict, final: bool = False) -> None:
+        """Raises the CesError of the first request that fails; the caller keeps the whole job.
+
+        A subagent whose launching turn isn't written yet waits for a later job. A final job has
+        none, so with `final` the subagent turns that still wait raise SubagentDeferred at the end."""
         harness, sid = job["harness"], job["session_id"]
+        with self._locked(harness, sid):
+            deferred = self._write_locked(job, harness, sid)
+        if final and deferred:
+            raise SubagentDeferred(deferred)
+
+    def _write_locked(self, job: dict, harness: str, sid: str) -> list:
         state = self._load(harness, sid)
         s = self._session_trajectory(job, state)
+        deferred = []
         for turn in job["turns"]:
             agent = turn["agent_id"]
             if agent is not None and agent not in state["agents"]:
-                root = state["agent_roots"].get(agent)
+                root = state["agent_roots"].get(agent) or self._retry_root(state, agent)
                 parent = s if turn["parent_agent_id"] is None else state["agents"].get(turn["parent_agent_id"])
                 if root is None or parent is None:
                     # CES roots a subagent's Trajectory at a Case of its parent's Trajectory, so the
                     # subagent waits until the turn that launched it is written; a later job sends it.
                     diagnose("ces_subagent_deferred", harness=harness)
+                    deferred.append(turn["turn_id"])
                     continue
                 key = f"subagent-v1:{harness}:{sid}:{agent}"
                 body = {"trajectories": [self._trajectory(
@@ -84,26 +108,49 @@ class CesWriter:
             try:
                 result = self.client.patch(self.cases_path, {"cases": cases},
                                            f"turn-v1:{harness}:{sid}:{turn['turn_id']}")
+                ids = result.get("case_ids", [])
+                roots = {spawned: ids[index] for spawned, index in turn["spawns"].items()}
             except Exception as error:
                 if not already_stored(error):
                     raise
                 diagnose("ces_already_stored", harness=harness)
-                # The stored turn's Case IDs still root the subagents it launched.
-                result = self._stored_case_ids(trajectory, turn) if turn["spawns"] else None
-            for spawned, index in turn["spawns"].items() if result is not None else ():
-                state["agent_roots"].setdefault(spawned, result.get("case_ids", [])[index])
+                # The stored turn's Case IDs still root the subagents it launched. If they can't be
+                # read now, the session file keeps where to look, and a later job tries again.
+                steps = self._stored_steps(trajectory, turn["turn_id"]) if turn["spawns"] else {}
+                roots = {}
+                for spawned, index in turn["spawns"].items():
+                    step = turn["cases"][index]["input"].get("step_index")
+                    if (steps or {}).get(step):
+                        roots[spawned] = steps[step]
+                    else:
+                        state["unrooted"][spawned] = [trajectory, turn["turn_id"], step]
+            for spawned, root in roots.items():
+                state["agent_roots"].setdefault(spawned, root)
             state["turns"].append(turn["turn_id"])
             self._save(harness, sid, state)
+        return deferred
 
-    def _stored_case_ids(self, trajectory: str, turn: dict) -> dict | None:
-        """The Case IDs CES already holds for `turn`, in the turn's order, or None."""
+    def _retry_root(self, state: dict, agent: str) -> str | None:
+        """Read the launching Case of a subagent whose root an earlier 409 couldn't read back."""
+        site = state["unrooted"].get(agent)
+        if site is None:
+            return None
+        trajectory, turn_id, step = site
+        root = (self._stored_steps(trajectory, turn_id) or {}).get(step)
+        if root is not None:
+            state["agent_roots"][agent] = root
+            del state["unrooted"][agent]
+        return root
+
+    def _stored_steps(self, trajectory: str, turn_id: str) -> dict | None:
+        """The Case IDs CES already holds for a turn, by step index, or None when unreadable."""
         by_step, cursor = {}, None
         try:
             while True:
                 query = "?limit=1000" + (f"&cursor={urllib.parse.quote(cursor)}" if cursor else "")
                 page = self.client.request("GET", f"{self.scope_path}/trajectories/{trajectory}/cases{query}", None)
                 for case in page.get("cases", []):
-                    if (case.get("input") or {}).get("turn_id") == turn["turn_id"]:
+                    if (case.get("input") or {}).get("turn_id") == turn_id:
                         by_step[case["input"].get("step_index")] = case["case_id"]
                 cursor = page.get("next_cursor")
                 if not cursor:
@@ -111,8 +158,17 @@ class CesWriter:
         except Exception:
             diagnose("ces_stored_cases_unreadable")
             return None
-        ids = [by_step.get(case["input"].get("step_index")) for case in turn["cases"]]
-        return {"case_ids": ids} if all(ids) else None
+        return by_step
+
+    @contextlib.contextmanager
+    def _locked(self, harness: str, sid: str):
+        """Hold the session's lock, so `evaluations replay` and the live sidecar can't each save
+        the session file over the other's changes."""
+        os.makedirs(self.state_dir, mode=0o700, exist_ok=True)
+        fd = os.open(self._path(harness, sid) + ".lock", os.O_WRONLY | os.O_CREAT, 0o600)
+        with os.fdopen(fd, "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            yield
 
     def written_turns(self, harness: str, sid: str) -> set:
         """Turn IDs this session's file records as written, so a restart does not resend them."""
@@ -160,7 +216,7 @@ class CesWriter:
                 state = json.load(fh)
         except (OSError, ValueError):
             state = {}
-        for name in ("session_case", "session_trajectory", "agents", "agent_roots"):
+        for name in ("session_case", "session_trajectory", "agents", "agent_roots", "unrooted"):
             state.setdefault(name, {})
         state.setdefault("turns", [])
         return state

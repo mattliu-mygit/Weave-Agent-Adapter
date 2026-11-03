@@ -106,7 +106,8 @@ def test_log_transcript_logs_every_turn_to_the_named_dataset(env, capsys, tmp_pa
         "session-v1:codex:ARM", "session-trajectory-v1:codex:ARM"]
     assert len([h for _, h, _ in writes if h["Idempotency-Key"].startswith("turn-v1:codex:ARM:")]) == 2
     assert json.loads(capsys.readouterr().out) == {"session_case_id": "case-1", "session_trajectory_id": "traj-2"}
-    assert os.listdir(home / "sessions" / "ds-arms") == ["codex-ARM.json"]
+    files = os.listdir(home / "sessions" / "ds-arms")
+    assert [name for name in files if not name.endswith(".lock")] == ["codex-ARM.json"]
 
 
 def test_log_transcript_needs_a_harness_and_a_file(env):

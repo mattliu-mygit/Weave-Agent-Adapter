@@ -251,16 +251,16 @@ class SessionSender:
             riders = agents if number == len(pending) - 1 else []
             body = {**prefix, "turns": [reader.turn_records(t, turn, job.facts, job.ctx, self.redactor),
                                         *(agent_turn for _, agent_turn in riders)]}
-            self._write(body, f"turn-v1:{job.ctx.harness}:{job.ctx.session_id}:{turn_id}")
+            self._write(body, f"turn-v1:{job.ctx.harness}:{job.ctx.session_id}:{turn_id}", job.final)
             self._sent.add((thread_id, turn_id))
         if not pending:
             # Subagent turns that finished after their parent's last turn was sent go on their own,
             # each under its own key, because the parent turn's key already holds another body.
             for key, agent_turn in agents:
                 self._write({**prefix, "turns": [agent_turn]},
-                            f"turn-v1:{job.ctx.harness}:{job.ctx.session_id}:{key[1]}")
+                            f"turn-v1:{job.ctx.harness}:{job.ctx.session_id}:{key[1]}", job.final)
 
-    def _write(self, job: dict, key: str) -> None:
+    def _write(self, job: dict, key: str, final: bool = False) -> None:
         with self._lock:
             aborted = self._abort.is_set()
             if not aborted:
@@ -269,7 +269,7 @@ class SessionSender:
             dlq.append(self.dlq_path, [dlq.record(job, key, None, "sidecar_exit", 0)])
             return
         try:
-            self.writer.write_turn(job)
+            self.writer.write_turn(job, final=final)
         except Exception as error:
             status, code = getattr(error, "status", None), getattr(error, "code", None)
             diagnose("ces_turn_too_large" if status == 413 else "ces_send", harness=job["harness"], error=error)

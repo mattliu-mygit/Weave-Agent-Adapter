@@ -21,7 +21,7 @@ class _Writer:
     def __init__(self, error=None):
         self.jobs, self.error = [], error
 
-    def write_turn(self, job):
+    def write_turn(self, job, final=False):
         self.jobs.append(job)
         if self.error:
             raise self.error

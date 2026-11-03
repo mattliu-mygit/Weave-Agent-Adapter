@@ -272,7 +272,8 @@ def cmd_evaluations(args) -> int:
             return _log_transcript(args, cfg, client, state)
         writer = CesWriter(client, state["scope_ref"], state["dataset_id"], rollout_context=ev.rollout_context)
         try:
-            result = dlq.replay(dlq.DEFAULT_PATH, lambda entry: writer.write_turn(entry["job"]))
+            # A replayed job has no later job to retry a waiting subagent, so it stays dead-lettered.
+            result = dlq.replay(dlq.DEFAULT_PATH, lambda entry: writer.write_turn(entry["job"], final=True))
         except dlq.ReplayInProgress as exc:
             print(exc, file=sys.stderr)
             return 1
