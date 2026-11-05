@@ -34,7 +34,7 @@ class Transcript:
 class TurnRecords:
     turn_id: str
     index: int              # 1-based among this file's turns
-    rows: list              # the prompt row through the row before the next prompt
+    rows: list              # the prompt row through the row before the next prompt, without copied rows
     end_type: str | None    # "completed", "aborted", or None while the turn may still run
 
 
@@ -190,18 +190,47 @@ def _starts(t: Transcript) -> list:
     return starts
 
 
+def _copies(t: Transcript) -> set:
+    """Positions of rows that repeat an earlier row's uuid. When Claude Desktop compacts a session it
+    has compacted before, it first appends a copy of rows starting at that earlier compact boundary,
+    original uuids and timestamps included. The copy's first rows would otherwise join the last turn
+    and, being older, sort before its prompt."""
+    if "copies" in t.cache:
+        return t.cache["copies"]
+    seen, copies = set(), set()
+    for i, row in enumerate(t.rows):
+        uuid = row.get("uuid")
+        if uuid in seen:
+            copies.add(i)
+        elif uuid:
+            seen.add(uuid)
+    t.cache["copies"] = copies
+    return copies
+
+
+def _turns(t: Transcript) -> list:
+    """(index, first row, end row) of each turn. A copied prompt's turn is left out, since its original
+    already is a turn, but still counts toward `index`, so a session's turn numbers keep the order of
+    those already written."""
+    starts, copies = _starts(t), _copies(t)
+    return [(index, i, j) for index, (i, j) in enumerate(zip(starts, [*starts[1:], len(t.rows)]), start=1)
+            if i not in copies]
+
+
+def _own_rows(t: Transcript, i: int, j: int) -> list:
+    copies = _copies(t)
+    return [row for k, row in enumerate(t.rows[i:j], start=i) if k not in copies]
+
+
 def turn_ends(t: Transcript) -> list:
     """(turn_id, "completed" | "aborted" | None) for this file's turns, in order."""
-    starts = _starts(t)
-    bounds = zip(starts, [*starts[1:], len(t.rows)])
-    return [(t.rows[i]["uuid"], _end(t, t.rows[i:j])) for i, j in bounds if t.rows[i].get("uuid")]
+    return [(t.rows[i]["uuid"], _end(t, _own_rows(t, i, j))) for _, i, j in _turns(t) if t.rows[i].get("uuid")]
 
 
 def select_turn(t: Transcript, turn_id: str) -> TurnRecords | None:
-    starts = _starts(t)
-    for index, (i, j) in enumerate(zip(starts, [*starts[1:], len(t.rows)]), start=1):
+    for index, i, j in _turns(t):
         if t.rows[i].get("uuid") == turn_id:
-            rows = t.rows[i:j]
+            rows = _own_rows(t, i, j)
             return TurnRecords(turn_id, index, rows, _end(t, rows))
     return None
 

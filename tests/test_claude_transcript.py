@@ -204,6 +204,59 @@ def test_turn_starts_are_found_with_one_pass_over_the_rows(tmp_path, monkeypatch
     assert len(checked) == len(rows)
 
 
+def _recompacted(tmp_path, *, copy: bool) -> str:
+    """Claude Desktop's shape in session d258ec50. After a /compact, the file holds the compact
+    boundary, the summary, and the last reply from before it, re-parented. Turn u2 runs later. The
+    next /compact first appends a copy of the rows since the first boundary, then its own boundary."""
+    since_compaction = [
+        ct.compact(10, "c1", trigger="manual"),
+        {**ct.prompt(10, "cs1", "This session is being continued..."), "isCompactSummary": True},
+        ct.assistant(8, "a-1", "msg_1", [ct.text("Both screens launched.")], stop_reason="end_turn"),
+        ct.prompt(11, "u1", "continue"),
+        ct.assistant(12, "a-2", "msg_2", [ct.text("ok")], stop_reason="end_turn"),
+    ]
+    return ct.write(tmp_path / "S1.jsonl", [
+        ct.prompt(1, "u0", "start"),
+        ct.assistant(2, "a-0", "msg_0", [ct.text("started")], stop_reason="end_turn"),
+        *since_compaction,
+        ct.prompt(20, "u2", "lets keep going"),
+        ct.assistant(21, "a-3", "msg_3", [ct.text("Going.")], stop_reason="end_turn"),
+        *(since_compaction if copy else []),
+        ct.compact(30, "c2", trigger="manual"),
+        ct.prompt(31, "u3", "next"),
+        ct.assistant(32, "a-4", "msg_4", [ct.text("done")], stop_reason="end_turn"),
+    ])
+
+
+def test_a_turn_starts_at_its_prompt_when_a_later_compaction_copies_older_rows_after_it(tmp_path):
+    t = ct_reader.load(_recompacted(tmp_path, copy=True))
+    turn = _records(t.path, "u2")
+
+    assert ct_reader.turn_ends(t) == [("u0", "completed"), ("u1", "completed"), ("u2", "completed"),
+                                      ("u3", "completed")]
+    first = turn["cases"][0]
+    assert (first["input"]["kind"], first["input"]["text"]) == ("user_message", "lets keep going")
+    assert first["input"]["started_at"] == ct.ts(20)
+    # Before, the copied reply (8 ms) and boundary (10 ms) sorted ahead of the prompt.
+    assert [(c["input"]["kind"], c["input"]["started_at"]) for c in turn["cases"]] == [
+        ("user_message", ct.ts(20)), ("assistant_message", ct.ts(21))]
+    assert first["output"]["turn_duration_ms"] == 1
+    # The copied prompt u1 still counts, so u3 keeps the turn number earlier versions gave it.
+    assert [ct_reader.select_turn(t, u).index for u in ("u0", "u1", "u2", "u3")] == [1, 2, 3, 5]
+
+
+def test_turns_without_copied_rows_build_as_before(tmp_path):
+    copied = _recompacted(tmp_path / "copied", copy=True)
+    plain = _recompacted(tmp_path / "plain", copy=False)
+
+    for turn_id in ("u0", "u1", "u3"):
+        expected = _records(plain, turn_id)
+        if turn_id == "u3":         # the plain file's turn 4; the copied prompt makes it 5
+            expected = {**expected, "cases": [{**c, "input": {**c["input"], "turn_index": 5}}
+                                              for c in expected["cases"]]}
+        assert _records(copied, turn_id) == expected, turn_id
+
+
 def test_a_fork_drops_its_copy_of_the_parents_history(tmp_path):
     import json as _json
 
