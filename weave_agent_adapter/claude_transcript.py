@@ -143,18 +143,19 @@ def _is_typed(t: Transcript, row: dict) -> bool:
     """A message a person or SDK caller sent, not a tool result or a system notification."""
     if row.get("type") != "user" or row.get("isMeta") or row.get("isCompactSummary") or not _counts(t, row):
         return False
-    if row.get("promptSource") == "system" or (row.get("origin") or {}).get("kind"):
+    # Claude Desktop marks a typed prompt `origin.kind: human`; other origins are notifications.
+    origin = (row.get("origin") or {}).get("kind")
+    if row.get("promptSource") == "system" or origin not in (None, "human"):
+        return False
+    # The app's own messages, such as linked-session status, carry `turnOrigin: sdk` and no human
+    # origin. A headless SDK caller's prompt looks the same but has another entrypoint.
+    if row.get("entrypoint") == "claude-desktop" and row.get("turnOrigin") == "sdk" and origin is None:
         return False
     content = _content(row)
     if isinstance(content, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
         return False
     text = _text(content)
     return bool(text) and not text.startswith(INTERRUPTED)
-
-
-def _is_prompt(t: Transcript, row: dict) -> bool:
-    """The first typed message of a turn. A later one (`promptIndex` > 0) steers the running turn."""
-    return _is_typed(t, row) and not (row.get("turnPosition") or {}).get("promptIndex")
 
 
 def _end(t: Transcript, rows: list) -> str | None:
@@ -167,7 +168,17 @@ def _end(t: Transcript, rows: list) -> str | None:
 
 
 def _starts(t: Transcript) -> list:
-    starts = [i for i, row in enumerate(t.rows) if _is_prompt(t, row)]
+    """Each turn's first typed message. A typed message with the running turn's `turnIndex` steers
+    it. `promptIndex` counts prompts across the session, so it can't mark a steer."""
+    starts, running = [], None
+    for i, row in enumerate(t.rows):
+        if not _is_typed(t, row):
+            continue
+        turn_index = (row.get("turnPosition") or {}).get("turnIndex")
+        if starts and turn_index is not None and turn_index == running:
+            continue
+        starts.append(i)
+        running = turn_index
     if t.agent_id is not None and t.rows and starts[:1] != [0]:
         starts.insert(0, 0)       # a fork starts working without a prompt of its own
     return starts

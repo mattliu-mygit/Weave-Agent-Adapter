@@ -150,6 +150,29 @@ def test_a_system_notification_is_not_a_turn_and_a_later_typed_message_steers(tm
     assert turn["cases"][0]["output"]["turn_steering_count"] == 1
 
 
+def test_claude_desktop_prompts_each_start_a_turn(tmp_path):
+    """Claude Desktop marks typed prompts `origin.kind: human`, and `promptIndex` counts prompts
+    across the session, so neither makes a prompt a notification or a steer."""
+    def typed(n, uuid, text, prompt_index, turn_index):
+        return {**ct.prompt(n, uuid, text), "origin": {"kind": "human"}, "promptSource": "sdk",
+                "turnPosition": {"promptIndex": prompt_index, "turnIndex": turn_index}}
+
+    path = ct.write(tmp_path / "S1.jsonl", [
+        typed(1, "u1", "Review this stack of PRs", 1, 1),
+        ct.assistant(2, "a-1", "msg_1", [ct.text("reviewed")], stop_reason="end_turn"),
+        {**ct.prompt(3, "n1", "<task-notification>done</task-notification>"),
+         "promptSource": "sdk", "origin": {"kind": "task-notification"},
+         "turnPosition": {"promptIndex": 1, "turnIndex": 2}},
+        typed(4, "u2", "lets go PR by PR", 2, 6),
+        ct.assistant(5, "a-2", "msg_2", [ct.text("ok")], stop_reason="end_turn"),
+        # The app's own message, such as linked-session status, is not a person's prompt.
+        {**ct.prompt(6, "s1", "Linked sessions now: top is idle"), "entrypoint": "claude-desktop",
+         "turnOrigin": "sdk", "promptSource": "sdk", "turnPosition": {"promptIndex": 2, "turnIndex": 7}},
+    ])
+
+    assert ct_reader.turn_ends(ct_reader.load(path)) == [("u1", "completed"), ("u2", "completed")]
+
+
 def test_a_fork_drops_its_copy_of_the_parents_history(tmp_path):
     import json as _json
 
