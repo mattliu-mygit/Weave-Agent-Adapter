@@ -189,9 +189,17 @@ def select_turn(t: Transcript, turn_id: str) -> TurnRecords | None:
     return None
 
 
+def _is_model_reply(t: Transcript, row: dict) -> bool:
+    """A reply a model wrote. Claude Code writes its own, such as API errors, under model `<synthetic>`."""
+    return row.get("type") == "assistant" and _counts(t, row) and (row.get("message") or {}).get("model") != "<synthetic>"
+
+
 def _context(t: Transcript, turn: TurnRecords) -> dict:
     prompt = turn.rows[0]
-    reply = next((r for r in turn.rows if r.get("type") == "assistant" and _counts(t, r)), {})
+    start = next(i for i, row in enumerate(t.rows) if row is prompt)
+    # A turn with no model reply, such as /compact, ran under the model of the last reply before it. This misses a
+    # /model switch made since that reply; read the switch's output if turns after a switch must name the new model.
+    reply = next((r for r in [*turn.rows, *reversed(t.rows[:start])] if _is_model_reply(t, r)), {})
     return {"model": (reply.get("message") or {}).get("model") or t.meta.get("model"),
             "effort": reply.get("effort") if isinstance(reply.get("effort"), str) else None,
             "cwd": prompt.get("cwd"), "git_branch": prompt.get("gitBranch") or None}

@@ -115,6 +115,24 @@ def test_every_case_emits_exactly_its_declared_keys_and_types(tmp_path):
     assert (session_case["input"]["cwd"], session_case["input"]["model"]) == ("/repo", "claude-test")
 
 
+def test_a_turn_with_no_model_reply_takes_model_and_effort_from_the_last_model_run(tmp_path):
+    no_response = ct.assistant(4, "a-2", "msg_2", [ct.text("No response requested.")])
+    no_response["message"]["model"] = "<synthetic>"
+    del no_response["effort"]
+    path = ct.write(tmp_path / "S1.jsonl", [
+        ct.prompt(1, "u1", "first"),
+        ct.assistant(2, "a-1", "msg_1", [ct.text("ok")], stop_reason="end_turn"),
+        ct.prompt(3, "u2", "second"),
+        no_response,
+        ct.meta_row(5, "m1"),
+        ct.prompt(6, "c1", "<command-name>/compact</command-name>"),
+    ])
+
+    for turn_id in ("u2", "c1"):
+        first = _records(path, turn_id)["cases"][0]["input"]
+        assert (first["model"], first["effort"]) == ("claude-test", "high"), turn_id
+
+
 def test_a_system_notification_is_not_a_turn_and_a_later_typed_message_steers(tmp_path):
     path = ct.write(tmp_path / "S1.jsonl", [
         {**ct.prompt(1, "u1", "first"), "turnPosition": {"promptIndex": 0, "turnIndex": 1}},

@@ -38,6 +38,7 @@ CES types a Dataset field from its first value and never retypes it, so each fie
 - Timestamps are RFC 3339 UTC with milliseconds, so string order is time order.
 - Text values are capped at 32,000 characters, ending in `…[truncated]`.
 - The redactor scrubs values, never field names.
+- A Claude Code turn's `model` and `effort` come from its first model reply. A turn with none, such as `/compact`, takes them from the last model reply before it. Claude Code's own `<synthetic>` replies, such as API errors, are not model replies.
 
 ## Writes for one turn
 
