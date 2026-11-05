@@ -8,6 +8,8 @@
 2. else, such as with no `origin` or one that is a local path, the basename of the
    working tree's top-level directory: `/Users/me/src/core` gives `core`;
 3. else, outside a Git repository or without `git`, None.
+
+It is lowercased, because GitHub ignores case: `Wandb/Core` and `wandb/core` are one repository.
 """
 from __future__ import annotations
 
@@ -32,7 +34,7 @@ def repo_identity(cwd: str | None) -> str | None:
     if top is None:
         return None
     remote = _git(cwd, "remote", "get-url", "origin")
-    return (remote and remote_path(remote)) or os.path.basename(top) or None
+    return ((remote and remote_path(remote)) or os.path.basename(top)).lower() or None
 
 
 def remote_path(url: str) -> str | None:

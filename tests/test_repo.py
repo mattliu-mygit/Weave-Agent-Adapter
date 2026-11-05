@@ -44,6 +44,16 @@ def test_a_repository_with_an_origin_is_named_by_the_remote_from_any_subdirector
     assert repo_identity(str(checkout / "src")) == "wandb/core"
 
 
+def test_repo_is_lowercase_because_github_ignores_case(tmp_path, git):
+    remote, plain = tmp_path / "remote", tmp_path / "Plain"
+    for checkout in (remote, plain):
+        checkout.mkdir()
+        git(checkout, "init", "-q")
+    git(remote, "remote", "add", "origin", "https://github.com/Wandb/Core.git")
+
+    assert (repo_identity(str(remote)), repo_identity(str(plain))) == ("wandb/core", "plain")
+
+
 def test_a_repository_without_a_hosted_origin_is_named_by_its_top_level_directory(tmp_path, git):
     plain, local = tmp_path / "plain", tmp_path / "local"
     for checkout in (plain, local):
