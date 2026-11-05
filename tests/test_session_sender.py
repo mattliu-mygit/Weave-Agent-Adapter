@@ -20,6 +20,10 @@ class _Plain:
 class _Writer:
     def __init__(self, error=None):
         self.jobs, self.error = [], error
+        self.calls = []
+
+    def declare_fields(self):
+        self.calls.append("declare_fields")
 
     def rootable_agents(self, harness, session_id):
         return {agent for job in self.jobs for turn in job["turns"] for agent in turn["spawns"]}
@@ -31,6 +35,7 @@ class _Writer:
         self.__dict__.setdefault("paths", {}).setdefault(session_id, []).append(path)
 
     def write_turn(self, job, final=False):
+        self.calls.append("write_turn")
         self.jobs.append(job)
         if self.error:
             raise self.error
@@ -69,6 +74,38 @@ def test_a_stop_sends_its_turn_with_the_subagent_turns_it_ran(tmp_path):
     [job] = writer.jobs
     assert (job["harness"], job["session_id"], job["session_case"]["input"]["kind"]) == ("codex", "T3", "session")
     assert [(t["agent_id"], t["turn_id"]) for t in job["turns"]] == [(None, "P1"), ("C1", "K1")]
+
+
+def _two_turns(tmp_path):
+    return cl.write(tmp_path / "s.jsonl", [
+        cl.prompt(1000, "u1", "hi"), cl.assistant(2000, "a1", "m1", [cl.text("hello")], stop_reason="end_turn"),
+        cl.prompt(3000, "u2", "bye"), cl.assistant(4000, "a2", "m2", [cl.text("bye")], stop_reason="end_turn")])
+
+
+def test_the_sender_declares_the_fields_once_before_its_first_write(tmp_path):
+    writer = _Writer()
+    sender = _sender(tmp_path, writer, harnesses=("claude-code",))
+
+    sender.handle(WireEvent("claude-code", "Stop", 1.0, {"session_id": "S1", "transcript_path": _two_turns(tmp_path)}))
+    _finish(sender)
+
+    assert writer.calls == ["declare_fields", "write_turn", "write_turn"]
+
+
+class _NoFieldsWriter(_Writer):
+    def declare_fields(self):
+        raise CesError(503, "unavailable", "down")
+
+
+def test_a_failed_field_declaration_is_logged_and_the_turns_still_go(tmp_path):
+    writer = _NoFieldsWriter()
+    sender = _sender(tmp_path, writer, harnesses=("claude-code",))
+
+    sender.handle(WireEvent("claude-code", "Stop", 1.0, {"session_id": "S1", "transcript_path": _two_turns(tmp_path)}))
+    _finish(sender)
+
+    assert [turn["turn_id"] for job in writer.jobs for turn in job["turns"]] == ["u1", "u2"]
+    assert "phase=ces_fields error=CesError" in (tmp_path / "adapter.log").read_text()
 
 
 def test_a_claude_code_stop_waits_briefly_for_its_turn_to_end(tmp_path):

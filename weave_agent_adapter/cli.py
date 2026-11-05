@@ -234,7 +234,7 @@ def _evaluations_status(path: str) -> int:
 def cmd_evaluations(args) -> int:
     import urllib.parse
 
-    from . import dlq, records
+    from . import dlq
     from .ces import CesClient, CesError, api_key_for, project_internal_id
     from .ces_writer import CesWriter
     from .config import load_config, load_evaluations_state, save_evaluations_state
@@ -257,7 +257,7 @@ def cmd_evaluations(args) -> int:
             dataset = client.post(f"{scope}/datasets",
                                   {"name": ev.name, "attributes": {"source": "weave-agent-adapter"}},
                                   f"dataset-v1:{ev.project}:{ev.name}")
-            client.post(f"{scope}/datasets/{dataset['dataset_id']}/fields", {"fields": records.fields()})
+            CesWriter(client, scope_ref, dataset["dataset_id"]).declare_fields()
             state = {"project": ev.project, "name": ev.name, "scope_ref": scope_ref,
                      "dataset_id": dataset["dataset_id"]}
             save_evaluations_state(state)
@@ -332,10 +332,10 @@ def _log_transcript(args, cfg, client, state) -> int:
                           {"name": args.dataset, "attributes": {"source": "weave-agent-adapter"}},
                           f"dataset-v1:{state['project']}:{args.dataset}")
     dataset_id = dataset["dataset_id"]
-    client.post(f"{scope}/datasets/{dataset_id}/fields", {"fields": records.fields()})
     # Each Dataset keeps its own session files, so a session logged here never reuses a live one's IDs.
     writer = CesWriter(client, state["scope_ref"], dataset_id, state_dir=os.path.join(DEFAULT_STATE_DIR, dataset_id),
                        rollout_context=cfg.evaluations.rollout_context)
+    writer.declare_fields()
     for _, job in jobs:
         writer.write_turn(job)
     print(json.dumps(writer.session_ids(args.harness, ctx.session_id)))

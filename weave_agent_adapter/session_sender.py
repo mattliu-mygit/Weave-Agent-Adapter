@@ -191,6 +191,12 @@ class SessionSender:
     # ------- worker thread -------
 
     def _run(self) -> None:
+        # Once per sidecar, before any write, so a Dataset whose setup ran on an older adapter
+        # still gets the fields this version added. A failure only leaves CES to type them.
+        try:
+            self.writer.declare_fields()
+        except Exception as error:
+            diagnose("ces_fields", error=error)
         while True:
             job = self._queue.get()
             if job is None:

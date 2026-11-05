@@ -21,6 +21,7 @@ import os
 import re
 import urllib.parse
 
+from . import records
 from .diagnostics import diagnose
 
 DEFAULT_STATE_DIR = os.path.expanduser(os.environ.get(
@@ -62,10 +63,16 @@ class CesWriter:
         self.scope_path = f"/v1/namespaces/{namespace}/scopes/{scope}"
         base = f"{self.scope_path}/datasets/{dataset_id}"
         self.cases_path, self.trajectories_path = base + "/cases", base + "/trajectories"
+        self.fields_path = base + "/fields"
         self.client = client
         self.dataset_id = dataset_id
         self.rollout_context = rollout_context
         self.state_dir = state_dir or DEFAULT_STATE_DIR
+
+    def declare_fields(self) -> None:
+        """Declare every field the adapter writes. CES leaves an identical declaration unchanged
+        and adds new ones, so repeating this after an upgrade is safe."""
+        self.client.post(self.fields_path, {"fields": records.fields()})
 
     def write_turn(self, job: dict, final: bool = False) -> None:
         """Raises the CesError of the first request that fails; the caller keeps the whole job.

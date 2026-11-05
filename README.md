@@ -101,8 +101,8 @@ weave-agent-adapter evaluations setup
 
 Setup declares the Dataset's fields and saves its IDs to
 `~/.weave-agent-adapter/evaluations.json`. The sidecar sends nothing until that
-file matches the configuration. Rerun setup after upgrading the adapter: it
-finds the same Dataset and declares any fields the new version added.
+file matches the configuration. After an upgrade, the sidecar declares any
+fields the new version added before it sends, so you don't need to rerun setup.
 
 ### 4. Register one harness
 
