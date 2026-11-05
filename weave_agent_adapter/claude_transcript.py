@@ -169,7 +169,11 @@ def _end(t: Transcript, rows: list) -> str | None:
 
 def _starts(t: Transcript) -> list:
     """Each turn's first typed message. A typed message with the running turn's `turnIndex` steers
-    it. `promptIndex` counts prompts across the session, so it can't mark a steer."""
+    it. `promptIndex` counts prompts across the session, so it can't mark a steer.
+
+    Cached, because `launch_sites` selects every turn and a large transcript has 100,000s of rows."""
+    if "starts" in t.cache:
+        return t.cache["starts"]
     starts, running = [], None
     for i, row in enumerate(t.rows):
         if not _is_typed(t, row):
@@ -181,6 +185,7 @@ def _starts(t: Transcript) -> list:
         running = turn_index
     if t.agent_id is not None and t.rows and starts[:1] != [0]:
         starts.insert(0, 0)       # a fork starts working without a prompt of its own
+    t.cache["starts"] = starts
     return starts
 
 

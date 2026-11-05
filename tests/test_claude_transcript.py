@@ -173,6 +173,22 @@ def test_claude_desktop_prompts_each_start_a_turn(tmp_path):
     assert ct_reader.turn_ends(ct_reader.load(path)) == [("u1", "completed"), ("u2", "completed")]
 
 
+def test_turn_starts_are_found_with_one_pass_over_the_rows(tmp_path, monkeypatch):
+    rows = []
+    for n in range(10):
+        rows += [ct.prompt(2 * n + 1, f"u{n}", f"prompt {n}"),
+                 ct.assistant(2 * n + 2, f"a-{n}", f"msg_{n}", [ct.text("ok")], stop_reason="end_turn")]
+    t = ct_reader.load(ct.write(tmp_path / "S1.jsonl", rows))
+    checked = []
+    is_typed = ct_reader._is_typed
+    monkeypatch.setattr(ct_reader, "_is_typed", lambda t, row: checked.append(row) or is_typed(t, row))
+
+    for turn_id, _ in ct_reader.turn_ends(t):
+        ct_reader.select_turn(t, turn_id)
+
+    assert len(checked) == len(rows)
+
+
 def test_a_fork_drops_its_copy_of_the_parents_history(tmp_path):
     import json as _json
 
