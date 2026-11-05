@@ -24,13 +24,15 @@ TOKEN_KINDS = ("input", "output", "cache_read", "cache_write", "reasoning")
 
 COMMON_INPUT = {"kind": "string", "harness": "string", "session_id": "string",
                 "trace_role": "string", "adapter_version": "string"}
+# CES groups a Trajectory by its root Case's fields: a session's by its session Case, a
+# subagent's by the tool_call Case that launched it. So both carry `repo`, `git_branch`, and `day`.
 SESSION_INPUT = {"cwd": "string", "model": "string", "config_version": "string",
-                 "started_at": "string"}
+                 "started_at": "string", "repo": "string", "git_branch": "string", "day": "string"}
 MEMBER_INPUT = {
     "session_trajectory_id": "string", "turn_id": "string", "turn_index": "integer",
     "step_index": "integer", "agent_id": "string", "started_at": "string", "ended_at": "string",
-    "model": "string", "effort": "string", "cwd": "string", "git_branch": "string",
-    "config_version": "string", "permission_mode": "string",
+    "model": "string", "effort": "string", "cwd": "string", "repo": "string", "git_branch": "string",
+    "day": "string", "config_version": "string", "permission_mode": "string",
 }
 KIND_INPUT = {
     "user_message": {"text": "string", "steering": "boolean"},
@@ -133,11 +135,19 @@ def as_json(value):
     return {"value": value}
 
 
-def session_case(ctx: TurnContext, *, cwd, model, started_at) -> dict:
+def day(started_at) -> str | None:
+    """The UTC date, `YYYY-MM-DD`, of an `iso` timestamp."""
+    return started_at[:10] if started_at else None
+
+
+def session_case(ctx: TurnContext, context: dict, started_at) -> dict:
+    """`context` is the first turn's, as for `turn`."""
     return {"input": {"kind": "session", "harness": ctx.harness, "session_id": ctx.session_id,
                       "trace_role": ctx.trace_role, "adapter_version": ctx.adapter_version,
-                      "cwd": cwd, "model": model, "config_version": ctx.config_version,
-                      "started_at": started_at},
+                      "cwd": context.get("cwd"), "model": context.get("model"),
+                      "config_version": ctx.config_version, "started_at": started_at,
+                      "repo": context.get("repo"), "git_branch": context.get("git_branch"),
+                      "day": day(started_at)},
             "output": {}}
 
 
@@ -154,19 +164,22 @@ def turn(ctx: TurnContext, *, turn_id, turn_index, agent_id, parent_agent_id, co
          steps: list, totals: dict, redactor) -> dict:
     """Order the steps and build the turn's Case bodies, ready for `CesWriter.write_turn`.
 
-    `context` holds the turn's model, effort, cwd, and git_branch. The writer fills in
-    `session_trajectory_id` and each Case's `trajectory_id`."""
+    `context` holds the turn's model, effort, cwd, repo, and git_branch. The writer fills in
+    `session_trajectory_id` and each Case's `trajectory_id`. A Case's `day` is the date it
+    started, so a subagent Trajectory groups by the day its launching tool call started."""
     ordered = sorted(steps, key=lambda s: (s["started_ms"] if s["started_ms"] is not None else 0,
                                            _KIND_RANK[s["kind"]], s["position"]))
     cases, spawns = [], {}
     for index, s in enumerate(ordered):
+        started_at = iso(s["started_ms"])
         case_input = {"kind": s["kind"], "harness": ctx.harness, "session_id": ctx.session_id,
                       "trace_role": ctx.trace_role, "adapter_version": ctx.adapter_version,
                       "session_trajectory_id": None, "turn_id": turn_id, "turn_index": turn_index,
-                      "step_index": index, "agent_id": agent_id, "started_at": iso(s["started_ms"]),
+                      "step_index": index, "agent_id": agent_id, "started_at": started_at,
                       "ended_at": iso(s["ended_ms"]), "model": context.get("model"),
                       "effort": context.get("effort"), "cwd": context.get("cwd"),
-                      "git_branch": context.get("git_branch"), "config_version": ctx.config_version,
+                      "repo": context.get("repo"), "git_branch": context.get("git_branch"),
+                      "day": day(started_at), "config_version": ctx.config_version,
                       "permission_mode": ctx.permission_mode, **s["input"]}
         case_output = {**s["output"], **(totals if index == 0 else {})}
         # Scrub values only: names like `input_tokens` would match the redactor's key denylist.

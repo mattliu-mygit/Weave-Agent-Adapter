@@ -63,6 +63,33 @@ def test_every_kind_emits_exactly_its_declared_keys_and_types(tmp_path):
     assert session["output"] == {}
 
 
+def test_repo_git_branch_and_day_are_declared_strings_on_every_root_case():
+    for name in ("repo", "git_branch", "day"):
+        assert name in records.SESSION_INPUT and name in records.MEMBER_INPUT
+        assert {"source": "input", "name": name, "value_type": "string"} in records.fields()
+
+
+def test_day_is_the_utc_date_the_session_started():
+    def session_day(timestamp):
+        return records.session_case(_ctx(), {}, records.iso(records.ms(timestamp)))["input"]["day"]
+
+    assert session_day("2026-10-06T23:59:59.999Z") == "2026-10-06"
+    assert session_day("2026-10-06T20:30:00-04:00") == "2026-10-07"
+    assert session_day(None) is None
+
+
+def test_the_session_case_and_a_subagents_root_case_carry_repo_branch_and_day(tmp_path, monkeypatch):
+    monkeypatch.setattr(codex_transcript, "repo_identity", {"/repo": "o/r"}.get)
+    t = codex_transcript.load(ct.write(tmp_path / "s.jsonl", ct.parent_with_subagent()))
+    session = codex_transcript.session_case(t, codex_transcript.select_turn(t, "P1"), _ctx("T3"))
+    turn = _turn(tmp_path, ct.parent_with_subagent(), "P1", session="T3")
+    root = turn["cases"][turn["spawns"]["C1"]]["input"]
+
+    expected = {"repo": "o/r", "git_branch": "main", "day": "2026-10-06"}
+    assert {k: session["input"][k] for k in expected} == expected
+    assert {k: root[k] for k in expected} == expected
+
+
 def test_an_exec_turn_becomes_a_prompt_two_answers_and_a_tool_call(tmp_path):
     turn = _turn(tmp_path, ct.exec_turn(), "U1")
     cases = turn["cases"]

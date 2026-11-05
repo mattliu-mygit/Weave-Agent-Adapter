@@ -95,6 +95,21 @@ def test_nested_subagents_name_their_task_calls_and_parents(tmp_path):
     assert ct_reader.subagent_paths(ct_reader.load(session)) == [_subagent(session, "a1"), _subagent(session, "a2")]
 
 
+def test_the_session_case_and_each_task_calls_case_carry_repo_branch_and_day(tmp_path, monkeypatch):
+    monkeypatch.setattr(ct_reader, "repo_identity", {"/repo": "wandb/core"}.get)
+    session = ct.session_with_task(tmp_path)
+    t = ct_reader.load(session)
+    main, a1 = _records(session, "u1"), _records(_subagent(session, "a1"), "s1")
+    roots = [ct_reader.session_case(t, ct_reader.select_turn(t, "u1"), _ctx())["input"],
+             main["cases"][main["spawns"]["a1"]]["input"], a1["cases"][a1["spawns"]["a2"]]["input"]]
+
+    expected = {"repo": "wandb/core", "git_branch": "main", "day": "2026-10-06"}
+    assert [{k: root[k] for k in expected} for root in roots] == [expected] * 3
+    # A retry builds the same bodies, so CES answers it under the same Idempotency-Keys.
+    assert ct_reader.session_case(t, ct_reader.select_turn(t, "u1"), _ctx())["input"] == roots[0]
+    assert _records(session, "u1") == main
+
+
 def test_every_case_emits_exactly_its_declared_keys_and_types(tmp_path):
     session = ct.session_with_task(tmp_path)
     turns = [_records(session, "u1"), _records(session, "u2"), _records(_subagent(session, "a1"), "s1")]

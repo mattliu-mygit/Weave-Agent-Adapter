@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 from . import records
 from .records import ToolFacts, TurnContext
+from .repo import repo_identity
 
 INTERRUPTED = "[Request interrupted by user"
 
@@ -218,14 +219,13 @@ def _context(t: Transcript, turn: TurnRecords) -> dict:
     reply = next((r for r in [*turn.rows, *reversed(t.rows[:start])] if _is_model_reply(t, r)), {})
     return {"model": (reply.get("message") or {}).get("model") or t.meta.get("model"),
             "effort": reply.get("effort") if isinstance(reply.get("effort"), str) else None,
-            "cwd": prompt.get("cwd"), "git_branch": prompt.get("gitBranch") or None}
+            "cwd": prompt.get("cwd"), "repo": repo_identity(prompt.get("cwd")),
+            "git_branch": prompt.get("gitBranch") or None}
 
 
 def session_case(t: Transcript, turn: TurnRecords, ctx: TurnContext) -> dict:
-    context = _context(t, turn)
     first = next((r for r in t.rows if r.get("timestamp")), {})
-    return records.session_case(ctx, cwd=context["cwd"], model=context["model"],
-                                started_at=records.iso(records.ms(first.get("timestamp"))))
+    return records.session_case(ctx, _context(t, turn), records.iso(records.ms(first.get("timestamp"))))
 
 
 def _decision(facts: ToolFacts | None, result_row: dict | None) -> str | None:

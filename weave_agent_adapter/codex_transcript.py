@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from . import records
 from .records import ToolFacts, TurnContext
+from .repo import repo_identity
 
 TURN_ENDS = ("task_complete", "turn_aborted")
 
@@ -218,17 +219,16 @@ def _spawns(item: dict) -> list:
 
 
 def _context(t: Transcript, turn: TurnRecords) -> dict:
+    cwd = _str(turn.context.get("cwd")) or _str(t.meta.get("cwd"))
     return {"model": _str(turn.context.get("model")), "effort": _str(turn.context.get("effort")),
-            "cwd": _str(turn.context.get("cwd")) or _str(t.meta.get("cwd")),
+            "cwd": cwd, "repo": repo_identity(cwd),
             "git_branch": _str((t.meta.get("git") or {}).get("branch"))}
 
 
 def session_case(t: Transcript, turn: TurnRecords, ctx: TurnContext) -> dict:
     """The session Case, from the first turn sent. The writer keeps its first body."""
-    context = _context(t, turn)
     first = next((r for r in t.rows if r.get("type") == "session_meta"), {})
-    return records.session_case(ctx, cwd=context["cwd"], model=context["model"],
-                                started_at=records.iso(records.ms(first.get("timestamp"))))
+    return records.session_case(ctx, _context(t, turn), records.iso(records.ms(first.get("timestamp"))))
 
 
 def turn_records(t: Transcript, turn: TurnRecords, facts: dict, ctx: TurnContext, redactor) -> dict:

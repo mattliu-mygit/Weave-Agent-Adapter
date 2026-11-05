@@ -23,8 +23,8 @@ CES types a Dataset field from its first value and never retypes it, so each fie
 | Group | Input fields |
 | --- | --- |
 | Every Case | `kind` (`session`, `user_message`, `assistant_message`, `tool_call`, `compaction`), `harness`, `session_id`, `trace_role`, `adapter_version` |
-| Session Case | `cwd`, `model`, `config_version`, `started_at` |
-| Member Cases | `session_trajectory_id`, `turn_id`, `turn_index`, `step_index`, `agent_id` (null on the main thread), `started_at`, `ended_at`, `model`, `effort`, `cwd`, `git_branch`, `config_version`, `permission_mode` |
+| Session Case | `cwd`, `model`, `config_version`, `started_at`, `repo`, `git_branch`, `day` |
+| Member Cases | `session_trajectory_id`, `turn_id`, `turn_index`, `step_index`, `agent_id` (null on the main thread), `started_at`, `ended_at`, `model`, `effort`, `cwd`, `repo`, `git_branch`, `day`, `config_version`, `permission_mode` |
 | `user_message` | `text`, `steering` (true for a message typed mid-turn) |
 | `tool_call` | `call_id`, `tool_name`, `arguments` (JSON) |
 | `compaction` | `trigger` |
@@ -35,6 +35,10 @@ CES types a Dataset field from its first value and never retypes it, so each fie
 | `tool_call` | `status`, `output`, `output_truncated`, `error`, `exit_code`, `duration_ms`, `permission_decision` (`approved`, `not_approved`, or null without a prompt) |
 | Turn totals, on `step_index` 0 | `turn_status` (`completed`, `aborted`, `incomplete`), `turn_duration_ms`, `turn_{input,output,cache_read,cache_write,reasoning}_tokens`, `turn_{steering,denial,tool_error,compaction}_count` |
 
+- **Grouping fields.** CES groups a Trajectory by its root Case's fields: a session Trajectory by the session Case, and a subagent Trajectory by the `tool_call` Case that launched it. Both carry these three, so Scores can be sliced by repository, branch, and day:
+  - `repo` names the repository without a local path. It is the `origin` remote's path after the host, without credentials or `.git` (`git@github.com:wandb/core.git` and `https://token@github.com/wandb/core` give `wandb/core`). Without a hosted `origin`, it is the basename of the working tree's top-level directory (`/Users/me/src/core` gives `core`). Outside a Git repository it is null. The sidecar asks `git` in the Case's `cwd` when it builds the turn, so a transcript logged on another machine, or after the checkout is gone, gets that machine's answer.
+  - `git_branch` is the branch the harness recorded: on the session Case, the first turn's.
+  - `day` is the UTC date, `YYYY-MM-DD`, of the Case's `started_at`: on the session Case, the day the session started; on a launching `tool_call`, the day the subagent started.
 - Timestamps are RFC 3339 UTC with milliseconds, so string order is time order.
 - Text values are capped at 32,000 characters, ending in `…[truncated]`.
 - The redactor scrubs values, never field names.
@@ -74,6 +78,8 @@ project = "entity/project"      # required
 **`rollout_context` (temporary switch).** With it on, each new session Trajectory carries CES's rollout context v1 (role `evaluated_rollout`), and each subagent Trajectory carries role `child_agent`. Both use the experiment Dataset ID and the request's Idempotency-Key as `client_record_key`, with null run and trace references. Frozen Trajectory reads include only Trajectories that have a context, and a context can't be added after creation. So turn the switch on as soon as the CES being written to serves wandb/core#60301. Once every CES does, make it the default and delete the switch. A session keeps the Trajectory body it started with, so turning it on mid-session leaves that session's earlier Trajectories without one.
 
 `weave-agent-adapter evaluations setup` resolves the project's `scope_ref` through GraphQL, creates the Dataset (key `dataset-v1:{project}:{name}`), declares the fields, and writes `{project, name, scope_ref, dataset_id}` to `~/.weave-agent-adapter/evaluations.json`. The sidecar sends nothing until that file matches the config.
+
+The sidecar never declares fields. After an upgrade that adds fields, rerun `evaluations setup`: the Dataset create replays under its key and returns the same Dataset, and CES adds the new declarations while leaving identical existing ones unchanged. Until then, CES types a new field from its first non-null value, so a field whose values are all null stays undeclared, and a query that filters or groups by it may fail. Cases are never rewritten, so Cases written before the upgrade lack the new fields.
 
 `weave-agent-adapter evaluations log-transcript --harness <codex|claude-code> --file <path> [--dataset <name>]` logs one finished session from its transcript file, outside the hooks. It creates the named Dataset (default `ab-arms`, same key scheme) and declares its fields, then writes every turn as final, the way the idle sweep does, with finished subagent turns on the last one. Its session files live under the Dataset's ID, apart from the live sessions'. It prints `{session_case_id, session_trajectory_id}`. Monopole uses it to log each A/B verification arm.
 
