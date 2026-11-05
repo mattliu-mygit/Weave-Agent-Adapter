@@ -37,6 +37,8 @@ def _issue_ids(fake):
     counter = itertools.count(1)
 
     def respond(method, path, headers, body):
+        if path.endswith("/fields"):
+            return 200, {}, {"fields": []}
         if path.endswith("/cases"):
             return 200, {}, {"case_ids": [f"case-{next(counter)}" for _ in body["cases"]]}
         return 200, {}, {"trajectory_ids": [f"traj-{next(counter)}" for _ in body["trajectories"]]}
@@ -81,8 +83,6 @@ def _arms_responder(fake):
     def respond(method, path, headers, body):
         if path.endswith("/datasets"):
             return 200, {}, {"dataset_id": "ds-arms"}
-        if path.endswith("/fields"):
-            return 200, {}, {"fields": []}
         return issue(method, path, headers, body)
     fake.respond = respond
 
@@ -127,21 +127,57 @@ def test_replay_requires_setup(env):
     assert cli.main(["evaluations", "replay", "--config", cfg]) == 2
 
 
+def _dead_turn(turn_id):
+    job = {"harness": "codex", "session_id": "T1", "session_case": {"input": {"kind": "session"}, "output": {}},
+           "turns": [{"agent_id": None, "parent_agent_id": None, "turn_id": turn_id,
+                      "cases": [{"input": {"kind": "user_message", "session_trajectory_id": None}, "output": {}}],
+                      "spawns": {}}]}
+    return dlq.record(job, f"turn-v1:codex:T1:{turn_id}", 503, "unavailable", 3)
+
+
 def test_replay_reruns_each_dead_turn_job(env, capsys):
     fake, cfg, _ = env
     config.save_evaluations_state({"project": "wandb/matt-test", "name": "agent-sessions",
                                    "scope_ref": "UHJvamVjdDox", "dataset_id": "ds-1"})
-    job = {"harness": "codex", "session_id": "T1", "session_case": {"input": {"kind": "session"}, "output": {}},
-           "turns": [{"agent_id": None, "parent_agent_id": None, "turn_id": "U1",
-                      "cases": [{"input": {"kind": "user_message", "session_trajectory_id": None}, "output": {}}],
-                      "spawns": {}}]}
-    dlq.append(dlq.DEFAULT_PATH, [dlq.record(job, "turn-v1:codex:T1:U1", 503, "unavailable", 3)])
+    dlq.append(dlq.DEFAULT_PATH, [_dead_turn("U1")])
     _issue_ids(fake)
 
     assert cli.main(["evaluations", "replay", "--config", cfg]) == 0
 
-    assert [h["Idempotency-Key"] for _, h, _ in fake.requests] == [
+    _, *writes = fake.requests
+    assert [h["Idempotency-Key"] for _, h, _ in writes] == [
         "session-v1:codex:T1", "session-trajectory-v1:codex:T1", "turn-v1:codex:T1:U1"]
+    assert not os.path.exists(dlq.DEFAULT_PATH)
+
+
+def test_replay_declares_the_fields_once_before_its_first_resend(env, capsys):
+    fake, cfg, _ = env
+    config.save_evaluations_state({"project": "wandb/matt-test", "name": "agent-sessions",
+                                   "scope_ref": "UHJvamVjdDox", "dataset_id": "ds-1"})
+    dlq.append(dlq.DEFAULT_PATH, [_dead_turn("U1"), _dead_turn("U2")])
+    _issue_ids(fake)
+
+    assert cli.main(["evaluations", "replay", "--config", cfg]) == 0
+
+    fields, *writes = fake.requests
+    assert fields[0] == f"{SCOPE}/datasets/ds-1/fields"
+    assert fields[2]["fields"] == records.fields()
+    assert [path for path, _, _ in writes if path.endswith("/fields")] == []
+    assert [h["Idempotency-Key"] for _, h, _ in writes][-2:] == ["turn-v1:codex:T1:U1", "turn-v1:codex:T1:U2"]
+
+
+def test_replay_resends_the_turns_when_the_field_declaration_fails(env, capsys):
+    fake, cfg, _ = env
+    config.save_evaluations_state({"project": "wandb/matt-test", "name": "agent-sessions",
+                                   "scope_ref": "UHJvamVjdDox", "dataset_id": "ds-1"})
+    dlq.append(dlq.DEFAULT_PATH, [_dead_turn("U1")])
+    fake.script = [(400, {}, {"error": {"code": "invalid_field", "message": "bad field"}})]
+    _issue_ids(fake)
+
+    assert cli.main(["evaluations", "replay", "--config", cfg]) == 0
+
+    assert fake.requests[-1][1]["Idempotency-Key"] == "turn-v1:codex:T1:U1"
+    assert "declaring the Dataset's fields failed" in capsys.readouterr().err
     assert not os.path.exists(dlq.DEFAULT_PATH)
 
 
@@ -158,7 +194,7 @@ def test_replay_reports_a_replay_already_running(env, monkeypatch, capsys):
 
 
 def test_replay_reports_lines_set_aside_as_corrupt(env, capsys):
-    _, cfg, _ = env
+    fake, cfg, _ = env
     config.save_evaluations_state({"scope_ref": "S", "dataset_id": "ds-1"})
     with open(dlq.DEFAULT_PATH, "w") as fh:
         fh.write('{"v": 2, "key"')
@@ -166,6 +202,7 @@ def test_replay_reports_lines_set_aside_as_corrupt(env, capsys):
     assert cli.main(["evaluations", "replay", "--config", cfg]) == 0
     err = capsys.readouterr().err
     assert "1 unreadable" in err and dlq.DEFAULT_PATH + ".corrupt" in err
+    assert fake.requests == []          # nothing to resend, so no field declaration either
 
 
 # ---- `_session_sender`: optional, so it must never raise ----
@@ -274,6 +311,7 @@ def test_replay_rebuilds_a_session_whose_turns_failed_to_build(env, tmp_path):
 
     assert cli.main(["evaluations", "replay", "--config", cfg]) == 0
 
-    assert [h["Idempotency-Key"] for _, h, _ in fake.requests] == [
+    _, *writes = fake.requests
+    assert [h["Idempotency-Key"] for _, h, _ in writes] == [
         "session-v1:codex:T1", "session-trajectory-v1:codex:T1", "turn-v1:codex:T1:U1"]
     assert not os.path.exists(dlq.DEFAULT_PATH)

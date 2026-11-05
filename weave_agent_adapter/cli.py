@@ -271,8 +271,21 @@ def cmd_evaluations(args) -> int:
             return _log_transcript(args, cfg, client, state)
         writer = CesWriter(client, state["scope_ref"], state["dataset_id"], rollout_context=ev.rollout_context)
         redactor = Redactor(deny_keys=cfg.redact_keys, enabled=cfg.redact_enabled)
+        declared = False
+
+        def send(entry):
+            # Declare before the first resend, not up front, so an empty dead-letter file sends no request.
+            nonlocal declared
+            if not declared:
+                declared = True
+                try:
+                    writer.declare_fields()
+                except CesError as exc:
+                    print(f"declaring the Dataset's fields failed, replaying anyway: {exc}", file=sys.stderr)
+            _replay_entry(writer, entry, redactor)
+
         try:
-            result = dlq.replay(dlq.DEFAULT_PATH, lambda entry: _replay_entry(writer, entry, redactor))
+            result = dlq.replay(dlq.DEFAULT_PATH, send)
         except dlq.ReplayInProgress as exc:
             print(exc, file=sys.stderr)
             return 1
