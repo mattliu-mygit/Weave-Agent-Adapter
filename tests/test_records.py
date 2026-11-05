@@ -90,6 +90,17 @@ def test_the_session_case_and_a_subagents_root_case_carry_repo_branch_and_day(tm
     assert {k: root[k] for k in expected} == expected
 
 
+def test_a_subagents_root_case_has_the_day_its_launching_call_started_not_the_sessions(tmp_path):
+    rows = ct.parent_with_subagent()
+    rows[0] = {**rows[0], "timestamp": "2026-10-05T23:59:59.000Z"}   # the session started before UTC midnight
+    t = codex_transcript.load(ct.write(tmp_path / "s.jsonl", rows))
+    session = codex_transcript.session_case(t, codex_transcript.select_turn(t, "P1"), _ctx("T3"))
+    turn = _turn(tmp_path, rows, "P1", session="T3")
+
+    assert session["input"]["day"] == "2026-10-05"
+    assert turn["cases"][turn["spawns"]["C1"]]["input"]["day"] == "2026-10-06"
+
+
 def test_an_exec_turn_becomes_a_prompt_two_answers_and_a_tool_call(tmp_path):
     turn = _turn(tmp_path, ct.exec_turn(), "U1")
     cases = turn["cases"]
