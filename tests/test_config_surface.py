@@ -145,6 +145,39 @@ def test_claude_code_surface_excludes_ambient_memory():
     assert any(p.endswith("/skills") for p in paths)
 
 
+def test_claude_code_surface_ignores_investigate_notes(tmp_path, monkeypatch):
+    # Mirrors wandb/core: .claude/skills links to ../.agents/skills, and the
+    # investigate skill's observations/ links to a notes folder outside the repo.
+    from weave_agent_adapter.profile import load_profile
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    repo = tmp_path / "repo"
+    skill = repo / ".agents" / "skills" / "investigate"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("investigate v1")
+    (repo / ".agents" / "skills" / "review").mkdir()
+    (repo / ".agents" / "skills" / "review" / "SKILL.md").write_text("review")
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    (notes / "first.md").write_text("first note")
+    (skill / "observations").symlink_to(notes, target_is_directory=True)
+    (repo / ".claude").mkdir()
+    (repo / ".claude" / "skills").symlink_to("../.agents/skills", target_is_directory=True)
+    surface = load_profile("claude-code").config_surface
+
+    def version():
+        return config_version(surface["paths"], cwd=str(repo), exclude=surface.get("exclude"))
+
+    before = version()
+    assert before is not None
+    (notes / "first.md").write_text("first note, edited")
+    (notes / "second.md").write_text("second note")
+    assert version() == before
+
+    (skill / "SKILL.md").write_text("investigate v2")
+    assert version() != before
+
+
 def _codex_home(tmp_path, monkeypatch):
     home = tmp_path / "home"
     codex = home / ".codex"

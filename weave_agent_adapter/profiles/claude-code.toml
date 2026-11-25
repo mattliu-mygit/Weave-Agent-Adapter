@@ -59,6 +59,10 @@ paths = [
   "{cwd}/.claude/commands",
   "{cwd}/.claude/agents",
 ]
+# The investigate skill writes its notes into observations/, which can be a
+# symlink to a notes folder outside the repo. Each new note would change the
+# version without any change to the skill.
+exclude = ["{cwd}/.claude/skills/investigate/observations"]
 
 [registration]
 user_path  = "~/.claude/settings.json"     # install (default scope)
