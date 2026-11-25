@@ -204,27 +204,50 @@ class CesWriter:
             fcntl.flock(lock, fcntl.LOCK_EX)
             yield
 
+    # What hooks report lives in the sidecar's memory, and the sidecar exits after a while with no
+    # hook event, so what a later turn still needs is kept in files beside the session file. Only
+    # the sidecar thread writes them, so they take no lock.
+
     def agent_paths(self, harness: str, sid: str) -> list:
-        """Subagent transcript paths the hooks named for this session, kept across restarts."""
-        try:
-            with open(self._path(harness, sid)[:-len(".json")] + ".agents.json", encoding="utf-8") as fh:
-                paths = json.load(fh)
-        except (OSError, ValueError):
-            return []
+        """Subagent transcript paths the hooks named for this session. Codex names them only in
+        SubagentStop, so a resumed session or a restarted sidecar would otherwise lose them."""
+        paths = self._read_hook_file(harness, sid, "agents")
         return [p for p in paths if isinstance(p, str)] if isinstance(paths, list) else []
 
     def remember_agent_path(self, harness: str, sid: str, path: str) -> None:
-        """Keep a subagent transcript path a hook named. Codex names them only in SubagentStop, so a
-        resumed session or a restarted sidecar would otherwise lose them. Only the sidecar
-        thread writes this file, so it takes no lock."""
         paths = self.agent_paths(harness, sid)
-        if path in paths:
-            return
+        if path not in paths:
+            self._write_hook_file(harness, sid, "agents", [*paths, path])
+
+    def permission_prompts(self, harness: str, sid: str) -> dict:
+        """tool_use_id -> whether the call ran, for each call a hook reported a permission prompt for.
+        A prompt can wait for its answer, and an approved call can run, longer than the sidecar stays up."""
+        prompts = self._read_hook_file(harness, sid, "prompts")
+        return {k: v for k, v in prompts.items() if isinstance(v, bool)} if isinstance(prompts, dict) else {}
+
+    def remember_permission_prompts(self, harness: str, sid: str, prompts: dict) -> None:
+        self._write_hook_file(harness, sid, "prompts", prompts)
+
+    def forget_permission_prompts(self, harness: str, sid: str) -> None:
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(self._hook_path(harness, sid, "prompts"))
+
+    def _hook_path(self, harness: str, sid: str, name: str) -> str:
+        return self._path(harness, sid)[:-len(".json")] + f".{name}.json"
+
+    def _read_hook_file(self, harness: str, sid: str, name: str):
+        try:
+            with open(self._hook_path(harness, sid, name), encoding="utf-8") as fh:
+                return json.load(fh)
+        except (OSError, ValueError):
+            return None
+
+    def _write_hook_file(self, harness: str, sid: str, name: str, value) -> None:
         os.makedirs(self.state_dir, mode=0o700, exist_ok=True)
-        target = self._path(harness, sid)[:-len(".json")] + ".agents.json"
+        target = self._hook_path(harness, sid, name)
         fd = os.open(target + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump([*paths, path], fh)
+            json.dump(value, fh)
         os.replace(target + ".tmp", target)
 
     def rootable_agents(self, harness: str, sid: str) -> set:

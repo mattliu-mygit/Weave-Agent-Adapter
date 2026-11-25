@@ -36,6 +36,15 @@ class _Writer:
     def remember_agent_path(self, harness, session_id, path):
         self.__dict__.setdefault("paths", {}).setdefault(session_id, []).append(path)
 
+    def permission_prompts(self, harness, session_id):
+        return dict(getattr(self, "prompts", {}).get(session_id, {}))
+
+    def remember_permission_prompts(self, harness, session_id, prompts):
+        self.__dict__.setdefault("prompts", {})[session_id] = dict(prompts)
+
+    def forget_permission_prompts(self, harness, session_id):
+        getattr(self, "prompts", {}).pop(session_id, None)
+
     def write_turn(self, job, final=False):
         self.calls.append("write_turn")
         self.jobs.append(job)
@@ -418,3 +427,44 @@ def test_a_resumed_session_keeps_the_subagent_transcripts_named_before(tmp_path)
     _finish(sender)
 
     assert processed[-1].agents == [child]
+
+
+def _decision_after_restart(tmp_path, writer, answer):
+    """A Codex call waits on a permission prompt. The session is forgotten, as when the sidecar exits after
+    120 s with no hook event, and a new sender gets the answer and the turn's Stop."""
+    tmp_path.mkdir()
+    rows = ct.exec_turn()
+    transcript = ct.write(tmp_path / "t.jsonl", rows[:10])      # up to the exec call
+    sender = _sender(tmp_path, writer)
+    sender.handle(_event("PermissionRequest", 1.0, session_id="T1", transcript_path=transcript, tool_use_id="exec-1"))
+    sender.sweep(now=200.0, ttl=0.0)
+    _finish(sender)
+
+    ct.write(transcript, rows)
+    sender = _sender(tmp_path, writer)
+    for event in answer:
+        sender.handle(_event(event, 201.0, session_id="T1", transcript_path=transcript, tool_use_id="exec-1"))
+    sender.handle(_event("Stop", 202.0, session_id="T1", transcript_path=transcript, turn_id="U1"))
+    _finish(sender)
+    [job] = writer.jobs
+    tool = next(c for c in job["turns"][0]["cases"] if c["input"]["kind"] == "tool_call")
+    return tool["output"]["permission_decision"]
+
+
+def test_a_permission_prompt_answered_after_the_session_was_forgotten_keeps_its_decision(tmp_path):
+    assert _decision_after_restart(tmp_path / "approved", _Writer(), ["PostToolUse"]) == "approved"
+    assert _decision_after_restart(tmp_path / "denied", _Writer(), []) == "not_approved"
+
+
+def test_a_session_end_forgets_the_sessions_permission_prompts(tmp_path):
+    transcript = cl.write(tmp_path / "s.jsonl", [cl.prompt(1000, "u1", "hi")])
+    writer = _Writer()
+    sender = _sender(tmp_path, writer, harnesses=("claude-code",))
+
+    sender.handle(WireEvent("claude-code", "PermissionRequest", 1.0,
+                            {"session_id": "S1", "transcript_path": transcript, "tool_use_id": "toolu_1"}))
+    assert writer.permission_prompts("claude-code", "S1") == {"toolu_1": False}
+    sender.handle(WireEvent("claude-code", "SessionEnd", 2.0, {"session_id": "S1", "transcript_path": transcript}))
+    _finish(sender)
+
+    assert writer.permission_prompts("claude-code", "S1") == {}

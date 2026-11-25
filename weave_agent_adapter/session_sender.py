@@ -2,8 +2,10 @@
 
 The sidecar calls `handle()` for every wire event. Hook events contribute what the
 transcript lacks (permission prompts, permission mode, subagent transcript paths)
-and say when a turn has ended. One worker thread reads the transcripts, builds the
-turn job, and writes it with `CesWriter`. A job that still fails goes to the DLQ.
+and say when a turn has ended. The sidecar exits after a while with no hook event,
+so `CesWriter` keeps the permission prompts and subagent paths in files beside the
+session file. One worker thread reads the transcripts, builds the turn job, and
+writes it with `CesWriter`. A job that still fails goes to the DLQ.
 
 Codex and Claude Code have transcript readers. A `Stop` ends a turn: Codex's names
 it with `turn_id`, and Claude Code's ends the transcript's last turn unless
@@ -89,7 +91,10 @@ class SessionSender:
         sid = p.get("session_id")
         if not sid or not session_sampled(sid, self.session_rate):
             return
-        s = self.sessions.setdefault(sid, _Session(wire.harness))
+        s = self.sessions.get(sid)
+        if s is None:
+            prompts = self.writer.permission_prompts(wire.harness, sid)     # kept by an earlier sidecar
+            s = self.sessions[sid] = _Session(wire.harness, prompts=prompts)
         s.last_activity = wire.captured_at
         s.trace_role = wire.trace_role
         if p.get("permission_mode"):
@@ -99,10 +104,12 @@ class SessionSender:
         if p.get("transcript_path") and not p.get("agent_id"):
             s.transcript = p["transcript_path"]   # subagent events carry their own transcript
         tool_id = p.get("tool_use_id")
-        if tool_id and wire.event == "PermissionRequest":
-            s.prompts[tool_id] = False
-        elif tool_id in s.prompts and wire.event == "PostToolUse":
-            s.prompts[tool_id] = True
+        if tool_id and (wire.event == "PermissionRequest" or (wire.event == "PostToolUse" and tool_id in s.prompts)):
+            s.prompts[tool_id] = wire.event == "PostToolUse"        # whether the call ran
+            try:
+                self.writer.remember_permission_prompts(s.harness, sid, s.prompts)
+            except OSError as error:
+                diagnose("ces_permission_prompts", harness=s.harness, error=error)
         if wire.event == "SubagentStop" and p.get("agent_transcript_path"):
             if p["agent_transcript_path"] not in s.agents:
                 s.agents.append(p["agent_transcript_path"])
@@ -118,7 +125,8 @@ class SessionSender:
             self._enqueue(sid, s, p.get("turn_id"))
         elif wire.event == "SessionEnd" and s.transcript:
             self.sessions.pop(sid, None)
-            self._enqueue(sid, s, None, sweep=True, final=True)
+            self._enqueue(sid, s, None, sweep=True, final=True)    # the job holds the decisions
+            self.writer.forget_permission_prompts(s.harness, sid)
 
     def sweep(self, now: float, ttl: float) -> None:
         for sid in [sid for sid, s in self.sessions.items() if now - s.last_activity > ttl]:

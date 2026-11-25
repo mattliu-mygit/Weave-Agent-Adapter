@@ -269,3 +269,13 @@ def test_named_subagent_transcripts_survive_a_restarted_writer(fake, tmp_path):
     _writer(fake, tmp_path).remember_agent_path("codex", "T3", "/a.jsonl")
 
     assert _writer(fake, tmp_path).agent_paths("codex", "T3") == ["/a.jsonl"]
+
+
+def test_permission_prompts_survive_a_restarted_writer_until_forgotten(fake, tmp_path):
+    _writer(fake, tmp_path).remember_permission_prompts("codex", "T3", {"exec-1": False})
+    _writer(fake, tmp_path).remember_permission_prompts("codex", "T3", {"exec-1": True, "exec-2": False})
+
+    assert _writer(fake, tmp_path).permission_prompts("codex", "T3") == {"exec-1": True, "exec-2": False}
+    _writer(fake, tmp_path).forget_permission_prompts("codex", "T3")
+    assert _writer(fake, tmp_path).permission_prompts("codex", "T3") == {}
+    assert list((tmp_path / "sessions").iterdir()) == []
