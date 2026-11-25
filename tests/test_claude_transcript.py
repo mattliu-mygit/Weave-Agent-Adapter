@@ -213,13 +213,19 @@ def _compact(command_ms, n) -> list:
             ct.prompt(command_ms, f"k{n}", "<command-name>/compact</command-name>")]
 
 
-def _recompacted(tmp_path, *, copy: bool) -> str:
+def _recompacted(tmp_path, *, copy: bool, auto: bool = False) -> str:
     """Claude Desktop's shape in session d258ec50. Turn u0 runs, then /compact k1, then turns u1 and u2.
     The next /compact, k2, first appends a copy of the rows since the first boundary, in which the last
-    reply from before that compaction follows the summary, re-parented. Then come k2's own rows."""
+    reply from before that compaction follows the summary, re-parented. Then come k2's own rows.
+
+    With `auto`, session ae268659's shape: the second compaction is automatic, while u2 runs. After the
+    copy come its boundary and summary, then the rest of u2."""
     reply = ct.assistant(2, "a-0", "msg_0", [ct.text("Both screens launched.")], stop_reason="end_turn")
     first, since = _compact(5, 1), [ct.prompt(11, "u1", "continue"),
                                     ct.assistant(12, "a-1", "msg_1", [ct.text("ok")], stop_reason="end_turn")]
+    second = [ct.compact(25, "c2"),
+              {**ct.prompt(25, "cs2", "This session is being continued..."), "isCompactSummary": True},
+              ct.assistant(26, "a-2b", "msg_2b", [ct.text("Gone.")], stop_reason="end_turn")] if auto else _compact(25, 2)
     return ct.write(tmp_path / "S1.jsonl", [
         ct.prompt(1, "u0", "start"),
         reply,
@@ -228,7 +234,7 @@ def _recompacted(tmp_path, *, copy: bool) -> str:
         ct.prompt(20, "u2", "lets keep going"),
         ct.assistant(21, "a-2", "msg_2", [ct.text("Going.")], stop_reason="end_turn"),
         *([*first[:2], reply, *first[2:], *since] if copy else []),
-        *_compact(25, 2),
+        *second,
         ct.prompt(31, "u3", "next"),
         ct.assistant(32, "a-3", "msg_3", [ct.text("done")], stop_reason="end_turn"),
     ])
@@ -280,6 +286,45 @@ def test_a_compact_boundary_is_written_once_in_the_turn_of_the_compact_that_wrot
                 ("user_message", "<command-name>/compact</command-name>"), ("compaction", None)], copy
             # The turn runs from the command until the compaction finished.
             assert (cases[0]["output"]["turn_duration_ms"], cases[0]["output"]["turn_compaction_count"]) == (5, 1), copy
+
+
+def test_the_rest_of_a_turn_after_an_auto_compaction_that_follows_copied_rows_stays_in_that_turn(tmp_path):
+    """Claude Desktop copies older rows before an auto compaction too. The rows after the copy are the
+    running turn's, so u2 builds as it does in the same file without the copy."""
+    copied = _recompacted(tmp_path / "copied", copy=True, auto=True)
+    plain = _recompacted(tmp_path / "plain", copy=False, auto=True)
+
+    assert ct_reader.turn_ends(ct_reader.load(copied)) == [("u0", "completed"), ("k1", None), ("u1", "completed"),
+                                                           ("u2", "completed"), ("u3", "completed")]
+    u2 = _records(copied, "u2")["cases"]
+    assert [(c["input"]["kind"], c["input"]["started_at"]) for c in u2] == [
+        ("user_message", ct.ts(20)), ("assistant_message", ct.ts(21)), ("compaction", ct.ts(25)),
+        ("assistant_message", ct.ts(26))]
+    assert (u2[0]["output"]["turn_duration_ms"], u2[0]["output"]["turn_compaction_count"]) == (6, 1)
+    for turn_id in ("u0", "k1", "u1", "u2", "u3"):
+        expected = _records(plain, turn_id)
+        if turn_id == "u3":                 # the plain file's turn 5; the copied prompts add 2
+            expected = {**expected, "cases": [{**c, "input": {**c["input"], "turn_index": 7}} for c in expected["cases"]]}
+        assert _records(copied, turn_id) == expected, turn_id
+
+
+def test_rows_a_copy_brings_back_that_no_earlier_row_has_stay_out_of_the_turn_before_it(tmp_path):
+    """Session f9b63d54: rows that failed to write on a full disk appear only in a later copy, stamped
+    hours before the turn the copy follows. They are rewritten history, not that turn's work."""
+    reply = ct.assistant(2, "a-0", "msg_0", [ct.text("Both screens launched.")], stop_reason="end_turn")
+    first = _compact(5, 1)
+    lost = ct.assistant(13, "a-1b", "msg_1b", [ct.text("The disk is full.")], stop_reason="end_turn")
+    path = ct.write(tmp_path / "S1.jsonl", [
+        ct.prompt(1, "u0", "start"), reply, *first,
+        ct.prompt(11, "u1", "continue"), ct.assistant(12, "a-1", "msg_1", [ct.text("ok")], stop_reason="end_turn"),
+        ct.prompt(20, "u2", "lets keep going"),
+        ct.assistant(21, "a-2", "msg_2", [ct.text("Going.")], stop_reason="end_turn"),
+        *first[:2], reply, *first[2:], ct.prompt(11, "u1", "continue"), lost,
+        *_compact(25, 2),
+    ])
+
+    assert [(c["input"]["kind"], c["input"]["started_at"]) for c in _records(path, "u2")["cases"]] == [
+        ("user_message", ct.ts(20)), ("assistant_message", ct.ts(21))]
 
 
 def test_a_fork_drops_its_copy_of_the_parents_history(tmp_path):

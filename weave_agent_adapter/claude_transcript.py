@@ -35,8 +35,8 @@ class Transcript:
 class TurnRecords:
     turn_id: str
     index: int              # 1-based among this file's turns
-    rows: list              # the prompt row through the row before the next prompt, without copied rows,
-                            # and for a /compact turn the compact boundary it wrote
+    rows: list              # the prompt row through the row before the next prompt that isn't a copy, without
+                            # copied or rewritten rows, and for a /compact turn the compact boundary it wrote
     end_type: str | None    # "completed", "aborted", or None while the turn may still run
 
 
@@ -213,10 +213,34 @@ def _copies(t: Transcript) -> set:
 def _turns(t: Transcript) -> list:
     """(index, first row, end row) of each turn. A copied prompt's turn is left out, since its original
     already is a turn, but still counts toward `index`, so a session's turn numbers keep the order of
-    those already written."""
+    those already written. A copied prompt doesn't end the turn before it either, so that turn takes
+    what follows an auto compaction after the copy (`_rewritten`)."""
     starts, copies = _starts(t), _copies(t)
-    return [(index, i, j) for index, (i, j) in enumerate(zip(starts, [*starts[1:], len(t.rows)]), start=1)
-            if i not in copies]
+    kept = [(index, i) for index, i in enumerate(starts, start=1) if i not in copies]
+    ends = [i for _, i in kept[1:]] + [len(t.rows)]
+    return [(index, i, j) for (index, i), j in zip(kept, ends)]
+
+
+def _rewritten(t: Transcript) -> set:
+    """Rows from a copied prompt up to the next prompt that isn't a copy, or up to an auto compaction
+    if one comes first. Before Claude Desktop compacts a session again, it rewrites the conversation
+    since the earlier compact boundary. Most rewritten rows repeat an earlier row's uuid, but a row
+    whose first write failed, as on a full disk, appears only here, stamped before the turn it would
+    join. After an auto compaction, the turn that was running goes on."""
+    if "rewritten" in t.cache:
+        return t.cache["rewritten"]
+    starts, copies = set(_starts(t)), _copies(t)
+    claimed = set(_compact_boundaries(t).values())
+    rewritten, inside = set(), False
+    for k, row in enumerate(t.rows):
+        if k in starts:
+            inside = k in copies
+        elif row.get("subtype") == "compact_boundary" and k not in copies and k not in claimed:
+            inside = False
+        if inside:
+            rewritten.add(k)
+    t.cache["rewritten"] = rewritten
+    return rewritten
 
 
 def _compact_boundaries(t: Transcript) -> dict:
@@ -242,9 +266,10 @@ def _compact_boundaries(t: Transcript) -> dict:
 def _own_rows(t: Transcript, i: int, j: int) -> list:
     """The rows of the turn from row i to row j. The compact boundary a /compact wrote goes right after
     the command row, where it falls in time, so the turn's duration spans the compaction and no more."""
-    copies, boundaries = _copies(t), _compact_boundaries(t)
+    copies, rewritten, boundaries = _copies(t), _rewritten(t), _compact_boundaries(t)
     moved = set(boundaries.values())
-    rows = [row for k, row in enumerate(t.rows[i:j], start=i) if k not in copies and k not in moved]
+    rows = [row for k, row in enumerate(t.rows[i:j], start=i)
+            if k not in copies and k not in rewritten and k not in moved]
     if i in boundaries:
         rows.insert(1, t.rows[boundaries[i]])
     return rows
