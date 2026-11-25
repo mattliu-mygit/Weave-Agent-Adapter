@@ -19,6 +19,7 @@ from .records import ToolFacts, TurnContext
 from .repo import repo_identity
 
 INTERRUPTED = "[Request interrupted by user"
+COMPACT_COMMAND = "<command-name>/compact</command-name>"
 
 
 @dataclass
@@ -34,7 +35,8 @@ class Transcript:
 class TurnRecords:
     turn_id: str
     index: int              # 1-based among this file's turns
-    rows: list              # the prompt row through the row before the next prompt, without copied rows
+    rows: list              # the prompt row through the row before the next prompt, without copied rows,
+                            # and for a /compact turn the compact boundary it wrote
     end_type: str | None    # "completed", "aborted", or None while the turn may still run
 
 
@@ -217,9 +219,35 @@ def _turns(t: Transcript) -> list:
             if i not in copies]
 
 
+def _compact_boundaries(t: Transcript) -> dict:
+    """Start of each /compact turn -> the compact boundary that /compact wrote. Claude Code writes the
+    boundary, the summary, and a meta caveat just before the command row, so by position the boundary
+    falls in the turn before, which has usually been sent already, or among copied rows, which no turn
+    sends."""
+    if "boundaries" in t.cache:
+        return t.cache["boundaries"]
+    boundaries = {}
+    for i in _starts(t):
+        if not (_text(_content(t.rows[i])) or "").startswith(COMPACT_COMMAND):
+            continue
+        k = i - 1
+        while k >= 0 and (t.rows[k].get("isMeta") or t.rows[k].get("isCompactSummary")):
+            k -= 1
+        if k >= 0 and t.rows[k].get("subtype") == "compact_boundary":
+            boundaries[i] = k
+    t.cache["boundaries"] = boundaries
+    return boundaries
+
+
 def _own_rows(t: Transcript, i: int, j: int) -> list:
-    copies = _copies(t)
-    return [row for k, row in enumerate(t.rows[i:j], start=i) if k not in copies]
+    """The rows of the turn from row i to row j. The compact boundary a /compact wrote goes right after
+    the command row, where it falls in time, so the turn's duration spans the compaction and no more."""
+    copies, boundaries = _copies(t), _compact_boundaries(t)
+    moved = set(boundaries.values())
+    rows = [row for k, row in enumerate(t.rows[i:j], start=i) if k not in copies and k not in moved]
+    if i in boundaries:
+        rows.insert(1, t.rows[boundaries[i]])
+    return rows
 
 
 def turn_ends(t: Transcript) -> list:

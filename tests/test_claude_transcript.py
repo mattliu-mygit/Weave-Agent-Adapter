@@ -204,27 +204,33 @@ def test_turn_starts_are_found_with_one_pass_over_the_rows(tmp_path, monkeypatch
     assert len(checked) == len(rows)
 
 
+def _compact(command_ms, n) -> list:
+    """The rows a /compact entered at `command_ms` writes: its compact boundary and the summary, stamped
+    when the compaction finished, then a meta caveat and the command row, stamped when it was entered."""
+    return [ct.compact(command_ms + 5, f"c{n}", trigger="manual"),
+            {**ct.prompt(command_ms + 5, f"cs{n}", "This session is being continued..."), "isCompactSummary": True},
+            ct.meta_row(command_ms, f"m{n}"),
+            ct.prompt(command_ms, f"k{n}", "<command-name>/compact</command-name>")]
+
+
 def _recompacted(tmp_path, *, copy: bool) -> str:
-    """Claude Desktop's shape in session d258ec50. After a /compact, the file holds the compact
-    boundary, the summary, and the last reply from before it, re-parented. Turn u2 runs later. The
-    next /compact first appends a copy of the rows since the first boundary, then its own boundary."""
-    since_compaction = [
-        ct.compact(10, "c1", trigger="manual"),
-        {**ct.prompt(10, "cs1", "This session is being continued..."), "isCompactSummary": True},
-        ct.assistant(8, "a-1", "msg_1", [ct.text("Both screens launched.")], stop_reason="end_turn"),
-        ct.prompt(11, "u1", "continue"),
-        ct.assistant(12, "a-2", "msg_2", [ct.text("ok")], stop_reason="end_turn"),
-    ]
+    """Claude Desktop's shape in session d258ec50. Turn u0 runs, then /compact k1, then turns u1 and u2.
+    The next /compact, k2, first appends a copy of the rows since the first boundary, in which the last
+    reply from before that compaction follows the summary, re-parented. Then come k2's own rows."""
+    reply = ct.assistant(2, "a-0", "msg_0", [ct.text("Both screens launched.")], stop_reason="end_turn")
+    first, since = _compact(5, 1), [ct.prompt(11, "u1", "continue"),
+                                    ct.assistant(12, "a-1", "msg_1", [ct.text("ok")], stop_reason="end_turn")]
     return ct.write(tmp_path / "S1.jsonl", [
         ct.prompt(1, "u0", "start"),
-        ct.assistant(2, "a-0", "msg_0", [ct.text("started")], stop_reason="end_turn"),
-        *since_compaction,
+        reply,
+        *first,
+        *since,
         ct.prompt(20, "u2", "lets keep going"),
-        ct.assistant(21, "a-3", "msg_3", [ct.text("Going.")], stop_reason="end_turn"),
-        *(since_compaction if copy else []),
-        ct.compact(30, "c2", trigger="manual"),
+        ct.assistant(21, "a-2", "msg_2", [ct.text("Going.")], stop_reason="end_turn"),
+        *([*first[:2], reply, *first[2:], *since] if copy else []),
+        *_compact(25, 2),
         ct.prompt(31, "u3", "next"),
-        ct.assistant(32, "a-4", "msg_4", [ct.text("done")], stop_reason="end_turn"),
+        ct.assistant(32, "a-3", "msg_3", [ct.text("done")], stop_reason="end_turn"),
     ])
 
 
@@ -232,29 +238,48 @@ def test_a_turn_starts_at_its_prompt_when_a_later_compaction_copies_older_rows_a
     t = ct_reader.load(_recompacted(tmp_path, copy=True))
     turn = _records(t.path, "u2")
 
-    assert ct_reader.turn_ends(t) == [("u0", "completed"), ("u1", "completed"), ("u2", "completed"),
-                                      ("u3", "completed")]
+    assert ct_reader.turn_ends(t) == [("u0", "completed"), ("k1", None), ("u1", "completed"),
+                                      ("u2", "completed"), ("k2", None), ("u3", "completed")]
     first = turn["cases"][0]
     assert (first["input"]["kind"], first["input"]["text"]) == ("user_message", "lets keep going")
     assert first["input"]["started_at"] == ct.ts(20)
-    # Before, the copied reply (8 ms) and boundary (10 ms) sorted ahead of the prompt.
+    # Before, the copied reply (2 ms) and boundary (10 ms) sorted ahead of the prompt.
     assert [(c["input"]["kind"], c["input"]["started_at"]) for c in turn["cases"]] == [
         ("user_message", ct.ts(20)), ("assistant_message", ct.ts(21))]
     assert first["output"]["turn_duration_ms"] == 1
-    # The copied prompt u1 still counts, so u3 keeps the turn number earlier versions gave it.
-    assert [ct_reader.select_turn(t, u).index for u in ("u0", "u1", "u2", "u3")] == [1, 2, 3, 5]
+    # The copied prompts k1 and u1 still count, so k2 and u3 keep the turn numbers earlier versions gave them.
+    assert [ct_reader.select_turn(t, u).index for u in ("u0", "k1", "u1", "u2", "k2", "u3")] == [1, 2, 3, 4, 7, 8]
 
 
 def test_turns_without_copied_rows_build_as_before(tmp_path):
     copied = _recompacted(tmp_path / "copied", copy=True)
     plain = _recompacted(tmp_path / "plain", copy=False)
 
-    for turn_id in ("u0", "u1", "u3"):
+    for turn_id in ("u0", "k1", "u1", "k2", "u3"):
         expected = _records(plain, turn_id)
-        if turn_id == "u3":         # the plain file's turn 4; the copied prompt makes it 5
-            expected = {**expected, "cases": [{**c, "input": {**c["input"], "turn_index": 5}}
+        if turn_id in ("k2", "u3"):         # the plain file's turns 5 and 6; the copied prompts add 2
+            expected = {**expected, "cases": [{**c, "input": {**c["input"], "turn_index": c["input"]["turn_index"] + 2}}
                                               for c in expected["cases"]]}
         assert _records(copied, turn_id) == expected, turn_id
+
+
+def test_a_compact_boundary_is_written_once_in_the_turn_of_the_compact_that_wrote_it(tmp_path):
+    """Each /compact writes its boundary just before the command row. Without copied rows the boundary
+    would fall in the turn before, which its Stop has usually sent already. After copied rows it
+    would fall among them, in a turn no one sends."""
+    for copy in (False, True):
+        t = ct_reader.load(_recompacted(tmp_path / str(copy), copy=copy))
+        turns = {turn_id: _records(t.path, turn_id) for turn_id, _ in ct_reader.turn_ends(t)}
+        compactions = {turn_id: [c["input"]["started_at"] for c in turn["cases"] if c["input"]["kind"] == "compaction"]
+                       for turn_id, turn in turns.items()}
+
+        assert compactions == {"u0": [], "k1": [ct.ts(10)], "u1": [], "u2": [], "k2": [ct.ts(30)], "u3": []}, copy
+        for turn_id in ("k1", "k2"):
+            cases = turns[turn_id]["cases"]
+            assert [(c["input"]["kind"], c["input"].get("text")) for c in cases] == [
+                ("user_message", "<command-name>/compact</command-name>"), ("compaction", None)], copy
+            # The turn runs from the command until the compaction finished.
+            assert (cases[0]["output"]["turn_duration_ms"], cases[0]["output"]["turn_compaction_count"]) == (5, 1), copy
 
 
 def test_a_fork_drops_its_copy_of_the_parents_history(tmp_path):

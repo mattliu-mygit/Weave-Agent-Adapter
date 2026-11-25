@@ -43,6 +43,7 @@ CES types a Dataset field from its first value and never retypes it, so each fie
 - Text values are capped at 32,000 characters, ending in `…[truncated]`.
 - The redactor scrubs values, never field names.
 - When Claude Desktop compacts a session again, it first appends a copy of rows starting at an earlier compact boundary, with their original uuids and timestamps. A Claude Code turn leaves out every row whose uuid an earlier row has, so its first Case is its own prompt. A copied prompt still counts toward `turn_index`.
+- A Claude Code `/compact` writes its compact boundary just before the command row, so by position the boundary would fall in the turn before, or among copied rows. Its `compaction` Case goes in the `/compact` turn instead, and that turn's `turn_duration_ms` runs from the command until the compaction finished.
 - A Claude Code turn's `model` and `effort` come from its first model reply. A turn with none, such as `/compact`, takes them from the last model reply before it. Claude Code's own `<synthetic>` replies, such as API errors, are not model replies.
 
 ## Writes for one turn
