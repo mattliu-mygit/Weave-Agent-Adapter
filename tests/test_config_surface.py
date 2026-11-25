@@ -78,3 +78,49 @@ def test_claude_code_surface_excludes_ambient_memory():
     paths = load_profile("claude-code").config_surface["paths"]
     assert not any("memory" in p for p in paths)
     assert any(p.endswith("/skills") for p in paths)
+
+
+def _codex_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    codex = home / ".codex"
+    (codex / "skills" / "review").mkdir(parents=True)
+    (codex / "skills" / "review" / "SKILL.md").write_text("review skill")
+    (codex / "AGENTS.md").write_text("be concise")
+    (codex / "config.toml").write_text('model = "gpt-5"\n')
+    (codex / "memories").mkdir()
+    (codex / "memories" / "note.md").write_text("remembered")
+    monkeypatch.setenv("HOME", str(home))
+    return codex
+
+
+def test_codex_surface_tracks_agents_md_but_not_config_toml_or_memories(tmp_path, monkeypatch):
+    from weave_agent_adapter.profile import load_profile
+
+    codex = _codex_home(tmp_path, monkeypatch)
+    paths = load_profile("codex").config_surface["paths"]
+    before = config_version(paths)
+    assert before is not None
+
+    # config.toml churns with trust lists, MCP, and auth; memories change every session.
+    (codex / "config.toml").write_text('model = "gpt-5"\n[projects."/repo"]\ntrust_level = "trusted"\n')
+    (codex / "memories" / "note.md").write_text("remembered more")
+    (codex / "state_5.sqlite").write_bytes(b"rows")
+    assert config_version(paths) == before
+
+    (codex / "AGENTS.md").write_text("be verbose")
+    assert config_version(paths) != before
+
+
+def test_codex_surface_includes_the_session_cwd_agents_md(tmp_path, monkeypatch):
+    from weave_agent_adapter.profile import load_profile
+
+    _codex_home(tmp_path, monkeypatch)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    paths = load_profile("codex").config_surface["paths"]
+    without = config_version(paths, cwd=str(repo))
+    (repo / "AGENTS.md").write_text("repo rules")
+    with_repo = config_version(paths, cwd=str(repo))
+    assert with_repo != without
+    (repo / "AGENTS.md").write_text("repo rules v2")
+    assert config_version(paths, cwd=str(repo)) != with_repo

@@ -42,6 +42,21 @@ agent_id           = "agent_id"
 agent_type         = "agent_type"
 compaction_trigger = "trigger"              # PreCompact (provisional)
 
+[config_surface]
+# Deliberately-edited context artifacts that shape agent behavior, hashed into
+# weave_agent_adapter.config_version — the A/B cohort key for evaluating
+# config changes. Excluded: ~/.codex/config.toml (it churns with trust lists,
+# MCP servers, and auth; the model is recorded separately) and ambient state
+# (memories, sessions, sqlite files, caches), which would flip the version
+# constantly and shatter cohorts.
+paths = [
+  "~/.codex/AGENTS.md",
+  "~/.codex/skills",
+  "~/.codex/agents",
+  "~/.codex/rules",
+  "{cwd}/AGENTS.md",
+]
+
 [registration]
 user_path  = "~/.codex/hooks.json"           # install (default scope)
 local_path = ".codex/hooks.json"             # install --local

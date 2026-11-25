@@ -6,7 +6,9 @@ import threading
 import time
 
 from weave_agent_adapter.ces import CesError
+from weave_agent_adapter.config_surface import config_version
 from weave_agent_adapter.model import WireEvent
+from weave_agent_adapter.profile import load_profile
 from weave_agent_adapter.session_sender import SessionSender
 import claude_transcripts as cl
 import codex_transcripts as ct
@@ -75,6 +77,30 @@ def test_a_stop_sends_its_turn_with_the_subagent_turns_it_ran(tmp_path):
     assert (job["harness"], job["session_id"], job["session_case"]["input"]["kind"]) == ("codex", "T3", "session")
     assert [(t["agent_id"], t["turn_id"]) for t in job["turns"]] == [(None, "P1"), ("C1", "K1")]
 
+
+
+def test_a_codex_session_carries_the_config_version_of_its_hook_cwd(tmp_path, monkeypatch):
+    home, repo = tmp_path / "home", tmp_path / "repo"
+    (home / ".codex").mkdir(parents=True)
+    (home / ".codex" / "AGENTS.md").write_text("be concise")
+    repo.mkdir()
+    (repo / "AGENTS.md").write_text("repo rules")
+    monkeypatch.setenv("HOME", str(home))
+    paths = load_profile("codex").config_surface["paths"]
+    transcript = ct.write(tmp_path / "t.jsonl", ct.exec_turn())
+    writer = _Writer()
+    sender = _sender(tmp_path, writer, config_paths={"codex": paths})
+
+    # Codex sends the session's working directory as `cwd` on every hook; {cwd} expands to it.
+    sender.handle(_event("SessionStart", 1.0, session_id="T1", transcript_path=transcript, cwd=str(repo)))
+    sender.handle(_event("Stop", 2.0, session_id="T1", transcript_path=transcript, turn_id="U1"))
+    _finish(sender)
+
+    [job] = writer.jobs
+    version = job["session_case"]["input"]["config_version"]
+    assert version == config_version(paths, cwd=str(repo))
+    assert version not in (None, config_version(paths))      # the repo's AGENTS.md counted
+    assert {case["input"]["config_version"] for case in job["turns"][0]["cases"]} == {version}
 
 def _two_turns(tmp_path):
     return cl.write(tmp_path / "s.jsonl", [
