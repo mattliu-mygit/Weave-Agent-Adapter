@@ -47,7 +47,8 @@ def _job(tmp_path):
     parent = codex_transcript.load(ct.write(tmp_path / "parent.jsonl", ct.parent_with_subagent()))
     child = codex_transcript.load(ct.write(tmp_path / "child.jsonl", ct.subagent_fork()))
     first = codex_transcript.select_turn(parent, "P1")
-    return {"harness": "codex", "session_id": "T3", "session_case": codex_transcript.session_case(parent, first, ctx),
+    return {"harness": "codex", "session_id": "T3",
+            "session_case": codex_transcript.session_case(parent, first, ctx, _Plain()),
             "turns": [codex_transcript.turn_records(parent, first, {}, ctx, _Plain()),
                       codex_transcript.turn_records(child, codex_transcript.select_turn(child, "K1"), {}, ctx, _Plain())]}
 

@@ -126,15 +126,15 @@ def day(started_at) -> str | None:
     return started_at[:10] if started_at else None
 
 
-def session_case(ctx: TurnContext, context: dict, started_at) -> dict:
-    """`context` is the first turn's, as for `turn`."""
-    return {"input": {"kind": "session", "harness": ctx.harness, "session_id": ctx.session_id,
-                      "trace_role": ctx.trace_role, "adapter_version": ctx.adapter_version,
-                      "cwd": context.get("cwd"), "model": context.get("model"),
-                      "config_version": ctx.config_version, "started_at": started_at,
-                      "repo": context.get("repo"), "git_branch": context.get("git_branch"),
-                      "day": day(started_at)},
-            "output": {}}
+def session_case(ctx: TurnContext, context: dict, started_at, redactor) -> dict:
+    """`context` is the first turn's, as for `turn`. Values are scrubbed, as in `turn`."""
+    case_input = {"kind": "session", "harness": ctx.harness, "session_id": ctx.session_id,
+                  "trace_role": ctx.trace_role, "adapter_version": ctx.adapter_version,
+                  "cwd": context.get("cwd"), "model": context.get("model"),
+                  "config_version": ctx.config_version, "started_at": started_at,
+                  "repo": context.get("repo"), "git_branch": context.get("git_branch"),
+                  "day": day(started_at)}
+    return {"input": {k: redactor.scrub(v) for k, v in case_input.items()}, "output": {}}
 
 
 def step(kind, started_ms, ended_ms, position, own_input, own_output, spawns=()) -> dict:

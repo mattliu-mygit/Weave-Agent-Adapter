@@ -57,7 +57,7 @@ def test_every_kind_emits_exactly_its_declared_keys_and_types(tmp_path):
         _assert_typed(case["input"], records.INPUT_FIELDS)
         _assert_typed(case["output"], records.OUTPUT_FIELDS)
     t = codex_transcript.load(ct.write(tmp_path / "s.jsonl", rows))
-    session = codex_transcript.session_case(t, codex_transcript.select_turn(t, "U1"), _ctx())
+    session = codex_transcript.session_case(t, codex_transcript.select_turn(t, "U1"), _ctx(), _Plain())
     assert set(session["input"]) == {*records.COMMON_INPUT, *records.SESSION_INPUT}
     _assert_typed(session["input"], records.INPUT_FIELDS)
     assert session["output"] == {}
@@ -71,7 +71,7 @@ def test_repo_git_branch_and_day_are_declared_strings_on_every_root_case():
 
 def test_day_is_the_utc_date_the_session_started():
     def session_day(timestamp):
-        return records.session_case(_ctx(), {}, records.iso(records.ms(timestamp)))["input"]["day"]
+        return records.session_case(_ctx(), {}, records.iso(records.ms(timestamp)), _Plain())["input"]["day"]
 
     assert session_day("2026-10-06T23:59:59.999Z") == "2026-10-06"
     assert session_day("2026-10-06T20:30:00-04:00") == "2026-10-07"
@@ -81,7 +81,7 @@ def test_day_is_the_utc_date_the_session_started():
 def test_the_session_case_and_a_subagents_root_case_carry_repo_branch_and_day(tmp_path, monkeypatch):
     monkeypatch.setattr(codex_transcript, "repo_identity", {"/repo": "o/r"}.get)
     t = codex_transcript.load(ct.write(tmp_path / "s.jsonl", ct.parent_with_subagent()))
-    session = codex_transcript.session_case(t, codex_transcript.select_turn(t, "P1"), _ctx("T3"))
+    session = codex_transcript.session_case(t, codex_transcript.select_turn(t, "P1"), _ctx("T3"), _Plain())
     turn = _turn(tmp_path, ct.parent_with_subagent(), "P1", session="T3")
     root = turn["cases"][turn["spawns"]["C1"]]["input"]
 
@@ -94,7 +94,7 @@ def test_a_subagents_root_case_has_the_day_its_launching_call_started_not_the_se
     rows = ct.parent_with_subagent()
     rows[0] = {**rows[0], "timestamp": "2026-10-05T23:59:59.000Z"}   # the session started before UTC midnight
     t = codex_transcript.load(ct.write(tmp_path / "s.jsonl", rows))
-    session = codex_transcript.session_case(t, codex_transcript.select_turn(t, "P1"), _ctx("T3"))
+    session = codex_transcript.session_case(t, codex_transcript.select_turn(t, "P1"), _ctx("T3"), _Plain())
     turn = _turn(tmp_path, rows, "P1", session="T3")
 
     assert session["input"]["day"] == "2026-10-05"
@@ -173,3 +173,15 @@ def test_values_are_scrubbed_and_names_are_not(tmp_path):
 
     assert turn["cases"][0]["input"]["text"] == "LIST FILES"
     assert "turn_input_tokens" in turn["cases"][0]["output"]
+
+
+def test_the_session_case_scrubs_its_values_too(tmp_path):
+    class Upper:
+        def scrub(self, value):
+            return value.upper() if isinstance(value, str) else value
+
+    t = codex_transcript.load(ct.write(tmp_path / "t.jsonl", ct.exec_turn()))
+    session = codex_transcript.session_case(t, codex_transcript.select_turn(t, "U1"), _ctx(), Upper())
+
+    assert session["input"]["kind"] == "SESSION"
+    assert session["input"]["cwd"] == "/REPO"

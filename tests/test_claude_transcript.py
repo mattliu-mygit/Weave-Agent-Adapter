@@ -99,13 +99,13 @@ def test_the_session_case_and_each_task_calls_case_carry_repo_branch_and_day(tmp
     session = ct.session_with_task(tmp_path)
     t = ct_reader.load(session)
     main, a1 = _records(session, "u1"), _records(_subagent(session, "a1"), "s1")
-    roots = [ct_reader.session_case(t, ct_reader.select_turn(t, "u1"), _ctx())["input"],
+    roots = [ct_reader.session_case(t, ct_reader.select_turn(t, "u1"), _ctx(), _Plain())["input"],
              main["cases"][main["spawns"]["a1"]]["input"], a1["cases"][a1["spawns"]["a2"]]["input"]]
 
     expected = {"repo": "wandb/core", "git_branch": "main", "day": "2026-10-06"}
     assert [{k: root[k] for k in expected} for root in roots] == [expected] * 3
     # A retry builds the same bodies, so CES answers it under the same Idempotency-Keys.
-    assert ct_reader.session_case(t, ct_reader.select_turn(t, "u1"), _ctx())["input"] == roots[0]
+    assert ct_reader.session_case(t, ct_reader.select_turn(t, "u1"), _ctx(), _Plain())["input"] == roots[0]
     assert _records(session, "u1") == main
 
 
@@ -124,7 +124,7 @@ def test_every_case_emits_exactly_its_declared_keys_and_types(tmp_path):
                     expected = TYPES[declared[name]]
                     assert isinstance(value, expected) and not (expected is int and isinstance(value, bool)), name
     t = ct_reader.load(session)
-    session_case = ct_reader.session_case(t, ct_reader.select_turn(t, "u1"), _ctx())
+    session_case = ct_reader.session_case(t, ct_reader.select_turn(t, "u1"), _ctx(), _Plain())
     assert set(session_case["input"]) == {*records.COMMON_INPUT, *records.SESSION_INPUT}
     assert (session_case["input"]["cwd"], session_case["input"]["model"]) == ("/repo", "claude-test")
 
@@ -477,7 +477,7 @@ def test_a_pr_link_row_stamped_after_the_first_prompt_does_not_hide_it(tmp_path)
     ]))
 
     assert ct_reader.turn_ends(t) == [("u1", "completed")]
-    session = ct_reader.session_case(t, ct_reader.select_turn(t, "u1"), _ctx())
+    session = ct_reader.session_case(t, ct_reader.select_turn(t, "u1"), _ctx(), _Plain())
     assert session["input"]["started_at"] == ct.ts(0)
 
 
@@ -503,5 +503,5 @@ def test_a_session_whose_file_copies_another_sessions_whole_file_leaves_out_thos
     assert ct_reader.turn_ends(t) == [("b1", "completed")]
     assert ct_reader.thread_id(t) == "S2"
     assert ct_reader.subagent_paths(t) == [own_agent]
-    session = ct_reader.session_case(t, ct_reader.select_turn(t, "b1"), _ctx())
+    session = ct_reader.session_case(t, ct_reader.select_turn(t, "b1"), _ctx(), _Plain())
     assert session["input"]["started_at"] == ct.ts(99)

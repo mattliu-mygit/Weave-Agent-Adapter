@@ -225,10 +225,10 @@ def _context(t: Transcript, turn: TurnRecords) -> dict:
             "git_branch": _str((t.meta.get("git") or {}).get("branch"))}
 
 
-def session_case(t: Transcript, turn: TurnRecords, ctx: TurnContext) -> dict:
+def session_case(t: Transcript, turn: TurnRecords, ctx: TurnContext, redactor) -> dict:
     """The session Case, from the first turn sent. The writer keeps its first body."""
     first = next((r for r in t.rows if r.get("type") == "session_meta"), {})
-    return records.session_case(ctx, _context(t, turn), records.iso(records.ms(first.get("timestamp"))))
+    return records.session_case(ctx, _context(t, turn), records.iso(records.ms(first.get("timestamp"))), redactor)
 
 
 def turn_records(t: Transcript, turn: TurnRecords, decisions: dict, ctx: TurnContext, redactor) -> dict:

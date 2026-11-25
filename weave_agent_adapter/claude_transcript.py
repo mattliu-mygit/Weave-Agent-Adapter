@@ -363,8 +363,8 @@ def _context(t: Transcript, turn: TurnRecords) -> dict:
             "git_branch": prompt.get("gitBranch") or None}
 
 
-def session_case(t: Transcript, turn: TurnRecords, ctx: TurnContext) -> dict:
-    return records.session_case(ctx, _context(t, turn), records.iso(_started(t)))
+def session_case(t: Transcript, turn: TurnRecords, ctx: TurnContext, redactor) -> dict:
+    return records.session_case(ctx, _context(t, turn), records.iso(_started(t)), redactor)
 
 
 def _decision(hooked: str | None, result_row: dict | None) -> str | None:

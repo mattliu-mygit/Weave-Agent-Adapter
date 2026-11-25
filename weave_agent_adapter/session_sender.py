@@ -293,10 +293,8 @@ class SessionSender:
             diagnose("ces_turn_missing", harness=job.ctx.harness)
             return
         first = reader.select_turn(t, ends[0][0])
-        session_case = reader.session_case(t, first, job.ctx)
-        session_case = {**session_case,
-                        "input": {k: self.redactor.scrub(v) for k, v in session_case["input"].items()}}
-        prefix = {"harness": job.ctx.harness, "session_id": job.ctx.session_id, "session_case": session_case,
+        prefix = {"harness": job.ctx.harness, "session_id": job.ctx.session_id,
+                  "session_case": reader.session_case(t, first, job.ctx, self.redactor),
                   "launch_sites": _sites_for([turn for _, turn in agents], sites)}
         for number, turn_id in enumerate(pending):
             turn = reader.select_turn(t, turn_id)
@@ -388,8 +386,7 @@ def transcript_jobs(reader, t, ctx: TurnContext, redactor, agents=(), final=True
     turn_ids = [turn_id for turn_id, _ in ends]
     if not turn_ids:
         return []
-    session_case = reader.session_case(t, reader.select_turn(t, turn_ids[0]), ctx)
-    session_case = {**session_case, "input": {k: redactor.scrub(v) for k, v in session_case["input"].items()}}
+    session_case = reader.session_case(t, reader.select_turn(t, turn_ids[0]), ctx, redactor)
     jobs = []
     for number, turn_id in enumerate(turn_ids):
         turns = [reader.turn_records(t, reader.select_turn(t, turn_id), {}, ctx, redactor)]
