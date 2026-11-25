@@ -5,7 +5,7 @@ import json
 import os
 
 from weave_agent_adapter import claude_transcript as ct_reader, records
-from weave_agent_adapter.records import ToolFacts, TurnContext
+from weave_agent_adapter.records import TurnContext
 import claude_transcripts as ct
 
 TYPES = {"string": str, "integer": int, "boolean": bool, "json": (dict, list)}
@@ -20,9 +20,9 @@ def _ctx():
     return TurnContext("claude-code", ct.SESSION, "default", "agent_session", "1.2.3", None)
 
 
-def _records(path, turn_id, facts=None):
+def _records(path, turn_id, decisions=None):
     t = ct_reader.load(path)
-    return ct_reader.turn_records(t, ct_reader.select_turn(t, turn_id), facts or {}, _ctx(), _Plain())
+    return ct_reader.turn_records(t, ct_reader.select_turn(t, turn_id), decisions or {}, _ctx(), _Plain())
 
 
 def _subagent(session, agent):
@@ -60,9 +60,8 @@ def test_a_tool_use_pairs_with_its_result(tmp_path):
         "status": "failed", "error": "permission denied", "permission_decision": "not_approved"}
 
 
-def test_hook_facts_win_over_the_transcript_permission(tmp_path):
-    turn = _records(ct.session_with_task(tmp_path), "u1",
-                    facts={"toolu_task": ToolFacts("Task", permission_requested=True, completed=True)})
+def test_hook_decisions_win_over_the_transcript_permission(tmp_path):
+    turn = _records(ct.session_with_task(tmp_path), "u1", decisions={"toolu_task": "approved"})
 
     task = next(c for c in turn["cases"] if c["input"]["kind"] == "tool_call")
     assert task["output"]["permission_decision"] == "approved"

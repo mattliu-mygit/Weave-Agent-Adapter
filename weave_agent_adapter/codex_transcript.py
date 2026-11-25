@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass, field
 
 from . import records
-from .records import ToolFacts, TurnContext
+from .records import TurnContext
 from .repo import repo_identity
 
 TURN_ENDS = ("task_complete", "turn_aborted")
@@ -231,8 +231,9 @@ def session_case(t: Transcript, turn: TurnRecords, ctx: TurnContext) -> dict:
     return records.session_case(ctx, _context(t, turn), records.iso(records.ms(first.get("timestamp"))))
 
 
-def turn_records(t: Transcript, turn: TurnRecords, facts: dict, ctx: TurnContext, redactor) -> dict:
-    """One turn of this thread as a job turn for `CesWriter.write_turn`."""
+def turn_records(t: Transcript, turn: TurnRecords, decisions: dict, ctx: TurnContext, redactor) -> dict:
+    """One turn of this thread as a job turn for `CesWriter.write_turn`. `decisions` maps a call or
+    operation ID to the permission decision hooks reported for it."""
     meta, rows = t.meta, turn.rows
     parent_thread = _str(meta.get("parent_thread_id"))
     agent_id = _str(meta.get("id")) if parent_thread else None
@@ -316,10 +317,9 @@ def turn_records(t: Transcript, turn: TurnRecords, facts: dict, ctx: TurnContext
         if failed:
             error, _ = records.cap(_str(failed[0].get("stderr")) or _text(_raw_output(failed[0]))
                                    or _str(failed[0].get("status")))
-        decisions = [(facts.get(i) or ToolFacts()).permission_decision
-                     for i in (call_id, *(item.get("id") for item in items))]
-        decision = ("not_approved" if "not_approved" in decisions
-                    else "approved" if "approved" in decisions else None)
+        hooked = [decisions.get(i) for i in (call_id, *(item.get("id") for item in items))]
+        decision = ("not_approved" if "not_approved" in hooked
+                    else "approved" if "approved" in hooked else None)
         steps.append(records.step(
             "tool_call", started, ended, position,
             {"call_id": call_id, "tool_name": _str(payload.get("name")),

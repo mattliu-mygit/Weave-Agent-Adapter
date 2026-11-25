@@ -24,7 +24,7 @@ from .config import session_sampled
 from .config_surface import config_version
 from .diagnostics import diagnose
 from .model import DEFAULT_TRACE_ROLE
-from .records import ToolFacts, TurnContext
+from .records import TurnContext
 
 READERS = {"codex": codex_transcript, "claude-code": claude_transcript}
 # Codex writes a turn's task_complete record 35-50 ms after the Stop hook fires (Stop
@@ -45,7 +45,7 @@ class _Session:
     trace_role: str = DEFAULT_TRACE_ROLE
     cwd: str | None = None
     config_version: str | None = None
-    tools: dict = field(default_factory=dict)      # tool_use_id -> ToolFacts
+    prompts: dict = field(default_factory=dict)    # tool_use_id of a permission prompt -> whether its call ran
 
 
 @dataclass
@@ -54,7 +54,7 @@ class _Job:
     turn_id: str | None          # None: the transcript's last turn
     agents: list
     ctx: TurnContext
-    facts: dict
+    decisions: dict              # tool_use_id -> the permission decision hooks reported
     sweep: bool = False          # the session went idle: send every turn that has ended
     final: bool = False          # the session ended: an unended last turn is final too
 
@@ -99,13 +99,10 @@ class SessionSender:
         if p.get("transcript_path") and not p.get("agent_id"):
             s.transcript = p["transcript_path"]   # subagent events carry their own transcript
         tool_id = p.get("tool_use_id")
-        if tool_id:
-            facts = s.tools.setdefault(tool_id, ToolFacts())
-            facts.hook_tool_name = facts.hook_tool_name or p.get("tool_name")
-            if wire.event == "PermissionRequest":
-                facts.permission_requested = True
-            elif wire.event == "PostToolUse":
-                facts.completed = True
+        if tool_id and wire.event == "PermissionRequest":
+            s.prompts[tool_id] = False
+        elif tool_id in s.prompts and wire.event == "PostToolUse":
+            s.prompts[tool_id] = True
         if wire.event == "SubagentStop" and p.get("agent_transcript_path"):
             if p["agent_transcript_path"] not in s.agents:
                 s.agents.append(p["agent_transcript_path"])
@@ -172,17 +169,16 @@ class SessionSender:
             s.config_version = config_version(surface["paths"], cwd=s.cwd, exclude=surface.get("exclude"))
         ctx = TurnContext(s.harness, sid, s.permission_mode, s.trace_role, self.adapter_version,
                           s.config_version)
-        facts = {k: ToolFacts(v.hook_tool_name, v.permission_requested, v.completed)
-                 for k, v in s.tools.items()}
+        decisions = {k: "approved" if ran else "not_approved" for k, ran in s.prompts.items()}
         agents = list(dict.fromkeys([*self.writer.agent_paths(s.harness, sid), *s.agents]))
-        job = _Job(s.transcript, turn_id, agents, ctx, facts, sweep, final)
+        job = _Job(s.transcript, turn_id, agents, ctx, decisions, sweep, final)
         coalesce = sweep and not final
         with self._lock:
             queued = self._queued_sweeps.get(sid) if coalesce else None
             if queued is not None:
                 # The queued sweep reads the newest transcript when it runs, so a burst of
                 # SubagentStops costs one job, not one each.
-                queued.agents, queued.facts, queued.ctx = job.agents, job.facts, job.ctx
+                queued.agents, queued.decisions, queued.ctx = job.agents, job.decisions, job.ctx
                 return
             if coalesce:
                 self._queued_sweeps[sid] = job
@@ -270,7 +266,7 @@ class SessionSender:
                 else self.writer.rootable_agents(job.ctx.harness, job.ctx.session_id)
                 | {agent for agent, (turn_id, _) in sites.items() if turn_id in written})
         return [(key, turn) for key, turn in
-                agent_turns(reader, t, job.agents, job.facts, job.ctx, self.redactor, self._sent,
+                agent_turns(reader, t, job.agents, job.decisions, job.ctx, self.redactor, self._sent,
                             final=job.final, only=only)
                 if key[1] not in written]
 
@@ -297,7 +293,7 @@ class SessionSender:
         for number, turn_id in enumerate(pending):
             turn = reader.select_turn(t, turn_id)
             riders = agents if number == len(pending) - 1 else []
-            body = {**prefix, "turns": [reader.turn_records(t, turn, job.facts, job.ctx, self.redactor),
+            body = {**prefix, "turns": [reader.turn_records(t, turn, job.decisions, job.ctx, self.redactor),
                                         *(agent_turn for _, agent_turn in riders)]}
             self._write(body, f"turn-v1:{job.ctx.harness}:{job.ctx.session_id}:{turn_id}", job.final)
             self._sent.add((thread_id, turn_id))
@@ -342,7 +338,7 @@ def _sites_for(turns: list, sites: dict) -> dict:
     return {turn["agent_id"]: sites[turn["agent_id"]] for turn in turns if turn["agent_id"] in sites}
 
 
-def agent_turns(reader, t, paths, facts, ctx, redactor, sent=frozenset(), final=False, only=None) -> list:
+def agent_turns(reader, t, paths, decisions, ctx, redactor, sent=frozenset(), final=False, only=None) -> list:
     """Finished, unsent subagent turns as ((thread_id, turn_id), job turn), parents first.
     With `only`, just the subagents whose thread IDs it holds."""
     loaded = []
@@ -367,7 +363,7 @@ def agent_turns(reader, t, paths, facts, ctx, redactor, sent=frozenset(), final=
                 continue
             turn = reader.select_turn(a, turn_id)
             found.append((depth(thread), records.ms(turn.rows[0].get("timestamp")) or 0, (thread, turn_id),
-                          reader.turn_records(a, turn, facts, ctx, redactor)))
+                          reader.turn_records(a, turn, decisions, ctx, redactor)))
     found.sort(key=lambda f: (f[0], f[1]))
     return [(key, turn) for _, _, key, turn in found]
 

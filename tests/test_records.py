@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from weave_agent_adapter import codex_transcript, records
-from weave_agent_adapter.records import ToolFacts, TurnContext
+from weave_agent_adapter.records import TurnContext
 import codex_transcripts as ct
 
 TYPES = {"string": str, "integer": int, "boolean": bool, "json": (dict, list)}
@@ -17,9 +17,9 @@ def _ctx(session="T1"):
     return TurnContext("codex", session, "default", "agent_session", "1.2.3", "cfg123")
 
 
-def _turn(tmp_path, rows, turn_id, facts=None, session="T1", redactor=None):
+def _turn(tmp_path, rows, turn_id, decisions=None, session="T1", redactor=None):
     t = codex_transcript.load(ct.write(tmp_path / "t.jsonl", rows))
-    return codex_transcript.turn_records(t, codex_transcript.select_turn(t, turn_id), facts or {},
+    return codex_transcript.turn_records(t, codex_transcript.select_turn(t, turn_id), decisions or {},
                                          _ctx(session), redactor or _Plain())
 
 
@@ -136,7 +136,7 @@ def test_a_message_typed_mid_turn_is_steering(tmp_path):
 
 
 def test_a_permission_prompt_on_an_operation_folds_into_its_tool_call(tmp_path):
-    turn = _turn(tmp_path, ct.exec_turn(), "U1", facts={"exec-2": ToolFacts("Bash", permission_requested=True)})
+    turn = _turn(tmp_path, ct.exec_turn(), "U1", decisions={"exec-2": "not_approved"})
 
     tool = next(c for c in turn["cases"] if c["input"]["kind"] == "tool_call")
     assert tool["output"]["permission_decision"] == "not_approved"

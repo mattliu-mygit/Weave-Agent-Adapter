@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass, field
 
 from . import records
-from .records import ToolFacts, TurnContext
+from .records import TurnContext
 from .repo import repo_identity
 
 INTERRUPTED = "[Request interrupted by user"
@@ -367,10 +367,10 @@ def session_case(t: Transcript, turn: TurnRecords, ctx: TurnContext) -> dict:
     return records.session_case(ctx, _context(t, turn), records.iso(_started(t)))
 
 
-def _decision(facts: ToolFacts | None, result_row: dict | None) -> str | None:
+def _decision(hooked: str | None, result_row: dict | None) -> str | None:
     """Hooks first. Otherwise the transcript: a rule that allowed the call shows no prompt."""
-    if facts and facts.permission_requested:
-        return facts.permission_decision
+    if hooked:
+        return hooked
     recorded = (result_row or {}).get("permissionDecision")
     if not isinstance(recorded, dict):
         return None
@@ -438,8 +438,9 @@ def launch_sites(t: Transcript) -> dict:
     return sites
 
 
-def turn_records(t: Transcript, turn: TurnRecords, facts: dict, ctx: TurnContext, redactor) -> dict:
-    """One turn of this file as a job turn for `CesWriter.write_turn`."""
+def turn_records(t: Transcript, turn: TurnRecords, decisions: dict, ctx: TurnContext, redactor) -> dict:
+    """One turn of this file as a job turn for `CesWriter.write_turn`. `decisions` maps a tool_use_id to
+    the permission decision hooks reported for it."""
     rows, steps = turn.rows, []
     typed = [(position, row) for position, row in enumerate(rows) if _is_typed(t, row)]
     for number, (position, row) in enumerate(typed):
@@ -503,7 +504,7 @@ def turn_records(t: Transcript, turn: TurnRecords, facts: dict, ctx: TurnContext
                 {"status": "failed" if failed else ("completed" if result else "incomplete"),
                  "output": output, "output_truncated": truncated, "error": output if failed else None,
                  "exit_code": None, "duration_ms": ended - began if began is not None and ended is not None else None,
-                 "permission_decision": _decision(facts.get(call_id), result_row)},
+                 "permission_decision": _decision(decisions.get(call_id), result_row)},
                 spawns=list(spawned.get(call_id, ()))))
 
     compactions = 0

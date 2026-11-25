@@ -65,20 +65,6 @@ _KIND_RANK = {"user_message": 0, "assistant_message": 1, "tool_call": 2, "compac
 
 
 @dataclass
-class ToolFacts:
-    """What hooks reported for one `tool_use_id`."""
-    hook_tool_name: str | None = None
-    permission_requested: bool = False
-    completed: bool = False                     # a PostToolUse arrived
-
-    @property
-    def permission_decision(self) -> str | None:
-        if not self.permission_requested:
-            return None
-        return "approved" if self.completed else "not_approved"
-
-
-@dataclass
 class TurnContext:
     """Values the transcript does not hold."""
     harness: str
