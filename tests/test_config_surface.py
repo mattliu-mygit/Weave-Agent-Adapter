@@ -104,6 +104,18 @@ def test_a_symlink_loop_ends_and_each_file_counts_once(tmp_path):
     assert looped == config_version([str(skills)])
 
 
+def test_the_git_folder_of_a_linked_skill_checkout_does_not_affect_the_version(tmp_path):
+    """A skill installed by linking a cloned repo into skills/. A branch switch or a fetch rewrites
+    files under .git, not the skill."""
+    shared, skills = _linked_skills(tmp_path)
+    (shared / "review" / ".git").mkdir()
+    (shared / "review" / ".git" / "HEAD").write_text("ref: refs/heads/main")
+    before = config_version([str(skills)])
+    (shared / "review" / ".git" / "HEAD").write_text("ref: refs/heads/topic")
+    (shared / "review" / ".git" / "FETCH_HEAD").write_text("abc123")
+    assert config_version([str(skills)]) == before
+
+
 def test_excluded_paths_do_not_affect_the_version(tmp_path):
     skills = tmp_path / "skills"
     (skills / "managed").mkdir(parents=True)

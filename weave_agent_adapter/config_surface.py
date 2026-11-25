@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import os
 
-_SKIP = {".DS_Store", "__pycache__"}
+_SKIP = {".DS_Store", "__pycache__", ".git"}   # .git: a linked checkout's branch switches and fetches
 _MAX_FILES = 1000            # runaway-directory guard
 _MAX_FILE_BYTES = 1 << 20    # per-file read cap
 
