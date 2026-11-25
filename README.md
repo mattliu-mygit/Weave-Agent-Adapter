@@ -261,18 +261,17 @@ weave-agent-adapter evaluations log-transcript --harness codex --file run.jsonl 
 
 ## Add a harness
 
-Another JSON-on-stdin command-hook harness can be added with one TOML profile.
-Copy a profile from
+Another JSON-on-stdin command-hook harness can install its hooks with one TOML
+profile. Copy a profile from
 [`weave_agent_adapter/profiles/`](weave_agent_adapter/profiles/), then declare:
 
-- native event to canonical action mappings;
-- dotted JSON payload fields;
-- optional thread and configuration-surface behavior;
-- user and local settings paths plus the events to register.
+- user and local settings paths plus the events to register;
+- the payload path of the session's working directory;
+- optionally, the instruction files hashed into `config_version`, and paths under
+  them to leave out.
 
-Common fields may be supplemented by event-specific field paths. See the
-[harness profile contract](specs/HARNESS_PROFILES.md) for the supported shape.
-A harness reaches CES once it also has a transcript reader, like
+See the [harness profile contract](specs/HARNESS_PROFILES.md) for the supported
+shape. A harness reaches CES once it also has a transcript reader, like
 `codex_transcript.py` and `claude_transcript.py`.
 
 ## Design contracts

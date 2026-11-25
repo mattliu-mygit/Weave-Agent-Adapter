@@ -1,8 +1,8 @@
-"""Load command-hook harness profiles and extract canonical fields.
+"""Load a harness profile (TOML): how to install its hooks, where a hook payload
+holds the session's working directory, and which files make up config_version.
 
-Loads a declarative profile (TOML) and turns raw harness payloads into
-canonical events + fields, so the sidecar holds no harness-specific
-knowledge. Field extraction resolves dotted paths (e.g. "tool_input.command").
+Hook events and transcripts are read by code, in the session sender and the
+transcript readers, not through the profile. Field paths are dotted (e.g. "a.b").
 """
 from __future__ import annotations
 
@@ -35,25 +35,19 @@ def _dig(obj: Any, dotted: str) -> Any:
 @dataclass
 class Profile:
     name: str
-    events: dict          # native event -> canonical action
-    fields: dict          # canonical field -> dotted path in payload
+    fields: dict          # [fields]: field -> dotted path in a hook payload; the hook reads `cwd`
     registration: dict
-    event_fields: dict = None  # native event -> canonical field overrides
     config_surface: dict = None   # [config_surface]: artifact paths hashed into config_version
 
     def __post_init__(self):
-        self.event_fields = self.event_fields or {}
         self.config_surface = self.config_surface or {}
 
-    def extract(self, payload: dict, native_event: str = None) -> dict:
-        mappings = dict(self.fields)
-        if native_event:
-            mappings.update(self.event_fields.get(native_event, {}))
+    def extract(self, payload: dict) -> dict:
         out = {}
-        for canonical, path in mappings.items():
+        for name, path in self.fields.items():
             val = _dig(payload, path) if path else None
             if val is not None:
-                out[canonical] = val
+                out[name] = val
         return out
 
     @classmethod
@@ -61,13 +55,8 @@ class Profile:
         h = d.get("harness", {})
         return cls(
             name=h.get("name", "unknown"),
-            events=dict(d.get("events", {})),
             fields=dict(d.get("fields", {})),
             registration=dict(d.get("registration", {})),
-            event_fields={
-                event: dict(fields)
-                for event, fields in d.get("event_fields", {}).items()
-            },
             config_surface=dict(d.get("config_surface", {})),
         )
 

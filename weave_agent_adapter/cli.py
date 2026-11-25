@@ -77,9 +77,9 @@ def _hook_result(args) -> int:
     return 0
 
 
-def _event_cwd(harness: str, event: str, payload: dict):
+def _event_cwd(harness: str, payload: dict):
     try:
-        return load_profile(harness).extract(payload, event).get("cwd")
+        return load_profile(harness).extract(payload).get("cwd")
     except Exception:
         return None
 
@@ -139,7 +139,7 @@ def cmd_hook(args) -> int:
             "v": 1, "harness": args.harness, "event": args.event,
             "captured_at": captured_at, "payload": payload,
             "trace_role": resolve_trace_role(
-                _event_cwd(args.harness, args.event, payload)
+                _event_cwd(args.harness, payload)
             ),
         }
         if not transport.send(event) and not (_ensure_sidecar() and transport.send(event)):

@@ -2,29 +2,16 @@
 
 ## Purpose
 
-A profile translates one command-hook harness into the adapter's canonical
-event model. Adding a harness's hooks should require a TOML profile, not
-installer branches; recording its sessions also needs a transcript reader.
+A profile tells the adapter three things about one command-hook harness: how to
+register its hooks, where a hook payload holds the session's working directory,
+and which files make up its `config_version`. Hook events and transcripts are
+read by code, the session sender and one transcript reader per harness, not
+through the profile. So a harness's hooks need only a TOML profile, while
+recording its sessions also needs a transcript reader.
 
 The supported harness contract is intentionally narrow: the harness runs a
 command for lifecycle events and passes one JSON object on standard input.
 Other delivery mechanisms are outside the current product.
-
-## Canonical actions
-
-Profiles may map native events to these actions:
-
-- `session_start`, `session_end`
-- `turn_start`, `turn_update`, `turn_end`
-- `tool_pre`, `tool_post`, `tool_error`
-- `permission_request`, `permission_denied`
-- `subagent_start`, `subagent_stop`
-- `compaction`
-
-`turn_update` applies observed metadata without changing the lifecycle. Missing
-actions degrade by omission. A missing session end is handled by the session
-TTL; a missing tool pre-event produces a completion-only tool record; a missing
-subagent start can be materialized from its first interior tool.
 
 ## Profile shape
 
@@ -32,32 +19,12 @@ subagent start can be materialized from its first interior tool.
 [harness]
 name = "my-harness"
 
-[events]
-SessionStart      = "session_start"
-UserPromptSubmit  = "turn_start"
-PreToolUse        = "tool_pre"
-PostToolUse       = "tool_post"
-Stop              = "turn_end"
-
 [fields]
-session_id        = "session_id"
-prompt            = "prompt"
-assistant_message = "last_assistant_message"
-tool_name          = "tool_name"
-tool_input         = "tool_input"
-tool_output        = "tool_response"
-tool_use_id        = "tool_use_id"
-cwd                = "cwd"
-transcript         = "transcript_path"
-model              = "model"
-permission_mode    = "permission_mode"
-turn_id            = "turn_id"
+cwd = "cwd"
 
-[event_fields.PostToolUseFailure]
-tool_error = "error"
-
-[event_fields.Stop]
-pending_work = "background_tasks"
+[config_surface]
+paths   = ["~/.my-harness/AGENTS.md", "~/.my-harness/skills", "{cwd}/AGENTS.md"]
+exclude = ["~/.my-harness/skills/.system"]
 
 [registration]
 user_path  = "~/.my-harness/hooks.json"
@@ -66,25 +33,47 @@ command    = "weave-agent-adapter hook --harness my-harness"
 events     = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"]
 ```
 
-Field values are dotted paths into the native payload. Optional fields are
-simply omitted when unavailable. `[event_fields.<NativeEvent>]` mappings add to
-or override `[fields]` for one native event; they select paths only and cannot
-run conditions, transforms, defaults, or code. Canonical fields currently used
-by the hook path or the session sender include session, prompt/reply, tool output or
-error, permission, subagent identity, transcript, compaction, pending work,
-working-directory, model, permission-mode, turn-ID, and effort data.
+`[fields]` holds `cwd`, a dotted path to the session's working directory in a
+hook payload. The hook uses it to find the workspace's `trace_role` file; without
+it, `trace_role` comes from the environment or the default.
 
-Capabilities are optional and additive. Profiles may omit session end,
-explicit tool failure, permissions, subagents, compaction, model metadata,
-configuration fingerprinting, or pending-work signals. Missing capabilities
-must not prevent the remaining observed turn from being recorded. A truthy `pending_work` on `turn_end` keeps the turn open; a later
-clean `turn_end` closes it, with TTL finalization as fallback.
+`[config_surface]` is optional; without it `config_version` is null.
 
-Optional `[thread]` and `[config_surface]` sections select shipped
-interpretation strategies. Unknown strategy names degrade to no behavior; they
-do not create dynamic code-loading behavior. A harness's sessions reach CES
-through a transcript reader, which is code rather than profile configuration.
-Hooks remain authoritative for the turn boundary and for permission prompts.
+- `paths` lists the files and folders whose content is hashed into
+  `config_version`, so Scores can be compared before and after an instruction
+  change. `~` is the home folder, `{cwd}` the session's working directory from
+  its hooks, and `{cwd_slug}` that directory with `/` replaced by `-`, as in
+  `~/.claude/projects`. An entry that needs `{cwd}` is skipped when no hook sent
+  one, and a missing path is skipped. Folders are walked with symlinks followed,
+  and a symlink's target counts under the path the profile shows, so moving the
+  target keeps the version. `.git`, `__pycache__`, `.DS_Store`, and `.pyc` files
+  are skipped, and at most 1,000 files of up to 1 MiB each are read.
+- `exclude` lists paths under `paths` to leave out, with the same placeholders.
+  A path matches as seen through the profile entry, so it works whether a folder
+  on the way is a symlink or not. Use it for files a harness or tool rewrites by
+  itself, such as Codex's bundled skills in `~/.codex/skills/.system`.
+
+Leave out anything that changes without an edit by the user, such as
+auto-memory or a settings file that records trust and auth, or every session
+gets a new version.
+
+## Hook events the session sender reads
+
+The session sender reads native event names and payload keys directly:
+
+- every event may carry `session_id`, `cwd`, `transcript_path`, and
+  `permission_mode`;
+- `PermissionRequest` and the `PostToolUse` of the same `tool_use_id` give the
+  call's `permission_decision`, `approved` or `not_approved`;
+- `Stop` ends a turn. Codex's names it with `turn_id`. Claude Code's ends the
+  transcript's last turn, unless `background_tasks` are still running;
+- `SubagentStop` with `agent_transcript_path` names a subagent's transcript;
+- `SessionEnd` sends an unended last turn as final.
+
+A harness that lacks an event loses only what that event gives. Without
+`PermissionRequest`, decisions are null; Claude Code then falls back to the
+decision its transcript records. Without `SessionEnd`, as in Codex, a last turn
+that never gets its `Stop` is never sent.
 
 ## Registration
 
@@ -112,9 +101,10 @@ prints the note without adding harness-specific installer behavior.
 2. Add the profile under `weave_agent_adapter/profiles/`.
 3. Add installer tests covering its registration path, and hook tests covering
    the events the harness actually emits.
-4. To send its sessions to CES, add a transcript reader and tests that drive a
-   session through it.
-5. Document genuine degradation where the harness lacks an action.
+4. To send its sessions to CES, add a transcript reader, register it in the
+   session sender, and add tests that drive a session through it. Events whose
+   names or keys differ from the ones above need session-sender changes too.
+5. Document genuine degradation where the harness lacks an event.
 
 Raw payload capture is not a shipped runtime feature because it conflicts with
 the adapter's privacy boundary.

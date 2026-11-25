@@ -1,48 +1,11 @@
 # Harness profile: Claude Code. See specs/HARNESS_PROFILES.md.
-# Field paths follow Claude Code's documented hook payloads.
+# claude_transcript.py reads the turns.
 
 [harness]
 name    = "claude-code"
 
-[events]
-SessionStart       = "session_start"
-UserPromptSubmit   = "turn_start"
-PreToolUse         = "tool_pre"
-PostToolUse        = "tool_post"
-PostToolUseFailure = "tool_error"
-PermissionRequest  = "permission_request"
-PermissionDenied   = "permission_denied"
-Stop               = "turn_end"
-SubagentStart      = "subagent_start"
-SubagentStop       = "subagent_stop"
-PreCompact         = "compaction"
-SessionEnd         = "session_end"
-
 [fields]
-session_id         = "session_id"
-prompt             = "prompt"              # UserPromptSubmit
-assistant_message  = "last_assistant_message"   # Stop (the turn's final reply)
-tool_name          = "tool_name"
-tool_input         = "tool_input"
-tool_output        = "tool_response"
-tool_use_id        = "tool_use_id"
-transcript         = "transcript_path"
-cwd                = "cwd"
-agent_id           = "agent_id"            # set on SubagentStop + subagent-interior tools
-agent_type         = "agent_type"          # SubagentStop, e.g. "Explore"
-model              = "model"
-permission_mode    = "permission_mode"
-compaction_trigger = "trigger"
-effort_level       = "effort.level"        # reasoning effort, e.g. "high" / "xhigh"
-
-[event_fields.PostToolUseFailure]
-tool_error = "error"
-
-[event_fields.PermissionDenied]
-denial_reason = "reason"
-
-[event_fields.Stop]
-pending_work = "background_tasks"
+cwd = "cwd"                  # the session's working directory, for trace_role
 
 [config_surface]
 # Deliberately-edited context artifacts that shape agent behavior, hashed into

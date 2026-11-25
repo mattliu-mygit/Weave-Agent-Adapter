@@ -1,18 +1,9 @@
-"""Codex exercises the same reducer through its declarative profile.
-
-Codex exposes explicit subagent lifecycle events and no SessionEnd; Stop emits
-a normal turn immediately, while the TTL sweep remains crash safety for turns
-that never receive Stop.
-"""
+"""Codex's profile installs its hooks, which include no SessionEnd."""
 from __future__ import annotations
 
 import json
 
 from weave_agent_adapter.install import install
-
-CX = "codex"
-SID = "cx1"
-
 
 
 

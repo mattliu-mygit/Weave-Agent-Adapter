@@ -1,46 +1,15 @@
 # Harness profile: OpenAI Codex CLI. See specs/HARNESS_PROFILES.md.
-# Codex's hook system mirrors Claude Code's (stdin JSON, tool_use_id correlation),
-# so this is a profile-only integration, no code. Field paths per the Codex
-# hooks docs (https://developers.openai.com/codex/hooks).
+# Codex's hooks (https://developers.openai.com/codex/hooks) mirror Claude Code's:
+# stdin JSON with tool_use_id correlation. codex_transcript.py reads the turns.
 #
-# Notable differences from Claude Code, handled by graceful degradation:
-#   - No SessionEnd event -> sessions close via the sidecar's idle sweep.
-#   - No PermissionDenied event -> a denied tool (hook exit 2) simply has no
-#     PostToolUse; it closes via the sweep rather than as an explicit rejection.
-#   - Emits SubagentStart in practice (Claude Code documents it but doesn't emit
-#     it in 2.1.201), so subagent records open at start rather than being
-#     materialized from their first interior tool.
+# Codex has no SessionEnd, so a session whose last turn gets no Stop, such as one
+# killed mid-turn, loses that turn. A denied call simply has no PostToolUse.
 
 [harness]
 name    = "codex"
 
-[events]
-SessionStart      = "session_start"
-UserPromptSubmit  = "turn_start"
-PreToolUse        = "tool_pre"
-PostToolUse       = "tool_post"
-PermissionRequest = "permission_request"
-SubagentStart     = "subagent_start"
-SubagentStop      = "subagent_stop"
-PreCompact        = "compaction"
-Stop              = "turn_end"
-
 [fields]
-session_id         = "session_id"
-tool_name          = "tool_name"
-tool_input         = "tool_input"
-tool_output        = "tool_response"
-tool_use_id        = "tool_use_id"
-cwd                = "cwd"
-model              = "model"
-permission_mode    = "permission_mode"
-turn_id            = "turn_id"
-prompt             = "prompt"               # UserPromptSubmit (provisional)
-assistant_message  = "last_assistant_message"   # Stop (the turn's final reply)
-transcript         = "transcript_path"
-agent_id           = "agent_id"
-agent_type         = "agent_type"
-compaction_trigger = "trigger"              # PreCompact (provisional)
+cwd = "cwd"                  # the session's working directory, for trace_role
 
 [config_surface]
 # Deliberately-edited context artifacts that shape agent behavior, hashed into

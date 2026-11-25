@@ -14,8 +14,8 @@ Recording is passive. It never approves, rejects, rewrites, or delays an agent
 action beyond a short bounded local handoff. Hook, sidecar, and send failures
 never fail the harness.
 
-Claude Code, Codex, and Gemini CLI ship as declarative profiles. Claude Code
-and Codex sessions are read from their transcripts. Gemini CLI's sessions are
+Claude Code, Codex, and Gemini CLI ship as profiles, which say how to install
+their hooks. Claude Code and Codex sessions are read from their transcripts. Gemini CLI's sessions are
 not recorded until a transcript reader for its verified format exists. Another harness can use the same hook path when
 it runs a command for lifecycle events and passes one JSON object on standard
 input.
@@ -38,16 +38,16 @@ for harnesses that require a JSON acknowledgment. A missing sidecar is started
 once and retried within the same short deadline. No hook performs network I/O
 or writes raw payloads.
 
-The sidecar owns profile loading, field extraction, redaction, transcript
-reading, and CES writes. One sidecar multiplexes harnesses and sessions. The
+The sidecar owns redaction, transcript reading, and CES writes. One sidecar multiplexes harnesses and sessions. The
 session sender keeps what the transcripts lack, such as permission prompts, the
 permission mode, and subagent transcript paths. When a turn ends, it hands a
 job to its worker thread. Events from a harness without a transcript reader are
 ignored.
 
-Profiles map native events and common or event-specific payload fields to a
-fixed canonical vocabulary. Harnesses that omit an event or field lose only
-that detail rather than requiring alternate code paths.
+A profile holds a harness's hook registration, the payload path of the
+session's working directory, and the files hashed into `config_version`. The
+session sender reads native hook events directly; a harness that omits an
+event loses only what that event gives.
 
 ## State and lifecycle
 
@@ -79,14 +79,12 @@ values or exception messages. Runtime files are user-only.
 ## Deliberate boundaries
 
 - Hook and sidecar remain separate for latency and dependency isolation.
-- Profile normalization and turn building remain separate, so a new
-  command-hook harness adds a profile and, to reach CES, a transcript reader,
-  not branches in shared code.
+- A new command-hook harness adds a profile and, to reach CES, a transcript
+  reader. Hook events are read in one place, the session sender.
 - Transcript formats are not part of this adapter's contract. Each reader is
   the only code that knows its format.
-- Capabilities are additive: session end, explicit failures, permissions,
-  subagents, compaction, model metadata, configuration surfaces, and
-  pending-work signals are all optional.
+- Capabilities are additive: session end, permissions, subagents, background
+  tasks, and configuration surfaces are all optional.
 - `records.py` and [EVALUATIONS_CASE_CONTRACT.md](EVALUATIONS_CASE_CONTRACT.md)
   own the CES field contract.
 

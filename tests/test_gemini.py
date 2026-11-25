@@ -1,4 +1,4 @@
-"""Gemini CLI uses the same reducer through a declarative profile."""
+"""Gemini CLI's profile installs its hooks. With no transcript reader, its sessions aren't recorded yet."""
 from __future__ import annotations
 
 import json
@@ -7,15 +7,11 @@ from weave_agent_adapter.install import install
 from weave_agent_adapter.profile import load_profile
 
 
-
-
-
-
 def test_gemini_profile_omits_unsupported_optional_capabilities():
     profile = load_profile("gemini-cli")
 
-    assert "PermissionRequest" not in profile.events
-    assert "SubagentStart" not in profile.events
+    assert "PermissionRequest" not in profile.registration["events"]
+    assert "SubagentStart" not in profile.registration["events"]
     assert profile.config_surface == {}
     assert profile.registration["command"].endswith("--success-json")
 
