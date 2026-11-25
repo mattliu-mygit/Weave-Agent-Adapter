@@ -253,6 +253,8 @@ def test_a_turn_starts_at_its_prompt_when_a_later_compaction_copies_older_rows_a
     assert [(c["input"]["kind"], c["input"]["started_at"]) for c in turn["cases"]] == [
         ("user_message", ct.ts(20)), ("assistant_message", ct.ts(21))]
     assert first["output"]["turn_duration_ms"] == 1
+    # k2's boundary goes to k2, and its summary and caveat, written after the copy, go in no turn.
+    assert [row["uuid"] for row in ct_reader.select_turn(t, "u2").rows] == ["u2", "a-2"]
     # The copied prompts k1 and u1 still count, so k2 and u3 keep the turn numbers earlier versions gave them.
     assert [ct_reader.select_turn(t, u).index for u in ("u0", "k1", "u1", "u2", "k2", "u3")] == [1, 2, 3, 4, 7, 8]
 
@@ -325,6 +327,40 @@ def test_rows_a_copy_brings_back_that_no_earlier_row_has_stay_out_of_the_turn_be
 
     assert [(c["input"]["kind"], c["input"]["started_at"]) for c in _records(path, "u2")["cases"]] == [
         ("user_message", ct.ts(20)), ("assistant_message", ct.ts(21))]
+
+
+def test_new_rows_after_copied_rows_that_no_compaction_follows_stay_in_the_running_turn(tmp_path):
+    """Session 2d924742: Claude Desktop rewrites the conversation with no compaction after it, then a
+    notification wakes the running turn. The rows from the notification on are that turn's work, so u2
+    builds as it does in the same file without the copy."""
+    reply = ct.assistant(2, "a-0", "msg_0", [ct.text("Both screens launched.")], stop_reason="end_turn")
+    first, since = _compact(5, 1), [ct.prompt(11, "u1", "continue"),
+                                    ct.assistant(12, "a-1", "msg_1", [ct.text("ok")], stop_reason="end_turn")]
+
+    def session(copy):
+        return ct.write(tmp_path / str(copy) / "S1.jsonl", [
+            ct.prompt(1, "u0", "start"), reply, *first, *since,
+            ct.prompt(20, "u2", "run the pilot"),
+            ct.assistant(21, "a-2", "msg_2", [ct.text("Launched.")], stop_reason="end_turn"),
+            *([*first[:2], reply, *first[2:], *since] if copy else []),
+            {**ct.prompt(30, "n1", "<task-notification>pilot finished</task-notification>"),
+             "promptSource": "system", "origin": {"kind": "task-notification"}},
+            ct.assistant(31, "a-2b", "msg_2b", [ct.text("The pilot finished.")], stop_reason="end_turn"),
+            ct.prompt(40, "u3", "next"),
+            ct.assistant(41, "a-3", "msg_3", [ct.text("done")], stop_reason="end_turn"),
+        ])
+
+    copied, plain = session(True), session(False)
+    u2 = _records(copied, "u2")["cases"]
+    # Before, the notification and the reply to it went in no turn, and u2 was [prompt 20, reply 21].
+    assert [(c["input"]["kind"], c["input"]["started_at"]) for c in u2] == [
+        ("user_message", ct.ts(20)), ("assistant_message", ct.ts(21)), ("assistant_message", ct.ts(31))]
+    assert u2[0]["output"]["turn_duration_ms"] == 11
+    for turn_id in ("u0", "k1", "u1", "u2", "u3"):
+        expected = _records(plain, turn_id)
+        if turn_id == "u3":                 # the plain file's turn 5; the copied prompts add 2
+            expected = {**expected, "cases": [{**c, "input": {**c["input"], "turn_index": 7}} for c in expected["cases"]]}
+        assert _records(copied, turn_id) == expected, turn_id
 
 
 def test_a_turn_ends_at_its_last_message_tool_result_interruption_or_compaction(tmp_path):

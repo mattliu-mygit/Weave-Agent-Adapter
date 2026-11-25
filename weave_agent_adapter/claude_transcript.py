@@ -224,7 +224,7 @@ def _turns(t: Transcript) -> list:
     """(index, first row, end row) of each turn. A copied prompt's turn is left out, since its original
     already is a turn, but still counts toward `index`, so a session's turn numbers keep the order of
     those already written. A copied prompt doesn't end the turn before it either, so that turn takes
-    what follows an auto compaction after the copy (`_rewritten`)."""
+    the new rows that follow the copy (`_rewritten`)."""
     starts, copies = _starts(t), _copies(t)
     kept = [(index, i) for index, i in enumerate(starts, start=1) if i not in copies]
     ends = [i for _, i in kept[1:]] + [len(t.rows)]
@@ -232,23 +232,29 @@ def _turns(t: Transcript) -> list:
 
 
 def _rewritten(t: Transcript) -> set:
-    """Rows from a copied prompt up to the next prompt that isn't a copy, or up to an auto compaction
-    if one comes first. Before Claude Desktop compacts a session again, it rewrites the conversation
-    since the earlier compact boundary. Most rewritten rows repeat an earlier row's uuid, but a row
-    whose first write failed, as on a full disk, appears only here, stamped before the turn it would
-    join. After an auto compaction, the turn that was running goes on."""
+    """Rows from a copied prompt up to the next prompt that isn't a copy, or up to the first row stamped
+    after every row before it, if that comes first. Claude Desktop sometimes rewrites the conversation so
+    far, original uuids and timestamps included: before it compacts a session again, and in some side
+    sessions with no compaction after. Most rewritten rows repeat an earlier row's uuid, but a row whose
+    first write failed, as on a full disk, appears only here, stamped before the turn it would join. A
+    row stamped later is new, such as an auto compaction or a notification, and from it on the turn
+    that was running goes on. A /compact's own boundary, summary, and caveat don't count, since they
+    belong to the /compact."""
     if "rewritten" in t.cache:
         return t.cache["rewritten"]
     starts, copies = set(_starts(t)), _copies(t)
-    claimed = set(_compact_boundaries(t).values())
-    rewritten, inside = set(), False
+    compacts = {k for i, b in _compact_boundaries(t).items() for k in range(b, i)}
+    rewritten, inside, latest = set(), False, float("-inf")
     for k, row in enumerate(t.rows):
+        stamp = None if k in copies else records.ms(row.get("timestamp"))
         if k in starts:
             inside = k in copies
-        elif row.get("subtype") == "compact_boundary" and k not in copies and k not in claimed:
+        elif inside and stamp is not None and stamp > latest and k not in compacts:
             inside = False
         if inside:
             rewritten.add(k)
+        if stamp is not None:
+            latest = max(latest, stamp)
     t.cache["rewritten"] = rewritten
     return rewritten
 
