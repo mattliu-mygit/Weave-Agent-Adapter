@@ -161,6 +161,16 @@ def _is_typed(t: Transcript, row: dict) -> bool:
     return bool(text) and not text.startswith(INTERRUPTED)
 
 
+def _is_work(t: Transcript, row: dict) -> bool:
+    """A row of the turn's own work: a message, a tool result, an interruption, or a compaction. A
+    turn ends at its last such row. Rows written after the work don't extend it, such as stop hook
+    summaries, the queue rows of the next prompt, or the summary and caveat of the /compact after it."""
+    if row.get("subtype") == "compact_boundary":
+        return True
+    return row.get("type") in ("user", "assistant") and _counts(t, row) and \
+        not row.get("isMeta") and not row.get("isCompactSummary")
+
+
 def _end(t: Transcript, rows: list) -> str | None:
     if any(r.get("type") == "user" and (_text(_content(r)) or "").startswith(INTERRUPTED) for r in rows):
         return "aborted"
@@ -458,10 +468,11 @@ def turn_records(t: Transcript, turn: TurnRecords, facts: dict, ctx: TurnContext
             compactions += 1
 
     stamps = [ms for r in rows if (ms := records.ms(r.get("timestamp"))) is not None]
+    ends = [ms for r in rows if _is_work(t, r) and (ms := records.ms(r.get("timestamp"))) is not None]
     tools = [s["output"] for s in steps if s["kind"] == "tool_call"]
     totals = {
         "turn_status": turn.end_type or "incomplete",
-        "turn_duration_ms": stamps[-1] - stamps[0] if stamps else None,
+        "turn_duration_ms": ends[-1] - stamps[0] if stamps and ends else None,
         **{f"turn_{k}_tokens": v for k, v in totals_tokens.items()}, "turn_reasoning_tokens": None,
         "turn_steering_count": max(0, len(typed) - 1),
         "turn_denial_count": sum(1 for out in tools if out["permission_decision"] == "not_approved"),

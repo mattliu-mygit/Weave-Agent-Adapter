@@ -327,6 +327,32 @@ def test_rows_a_copy_brings_back_that_no_earlier_row_has_stay_out_of_the_turn_be
         ("user_message", ct.ts(20)), ("assistant_message", ct.ts(21))]
 
 
+def test_a_turn_ends_at_its_last_message_tool_result_interruption_or_compaction(tmp_path):
+    """A turn rebuilt from a finished transcript is followed by rows that aren't its work: the stop hook
+    summary, the queue rows of the next prompt, and the summary and caveat of the /compact after it."""
+    def queued(ms):
+        return {"type": "queue-operation", "operation": "enqueue", "timestamp": ct.ts(ms), "sessionId": ct.SESSION}
+
+    path = ct.write(tmp_path / "S1.jsonl", [
+        ct.prompt(1, "u1", "build it"),
+        ct.assistant(2, "a-1", "msg_1", [ct.tool_use("toolu_1", "Bash", {"command": "make"})], stop_reason="tool_use"),
+        ct.tool_result(4, "r1", "toolu_1", "built"),
+        ct.assistant(6, "a-2", "msg_2", [ct.text("Built.")], stop_reason="end_turn"),
+        {"type": "system", "subtype": "stop_hook_summary", "uuid": "h1", "timestamp": ct.ts(7), "sessionId": ct.SESSION},
+        queued(40),
+        *_compact(50, 1),
+        ct.prompt(60, "u2", "now test it"),
+        ct.assistant(61, "a-3", "msg_3", [ct.tool_use("toolu_2", "Bash", {"command": "make test"})], stop_reason="tool_use"),
+        ct.interrupted(63, "i2"),
+        queued(90),
+    ])
+
+    durations = {turn_id: _records(path, turn_id)["cases"][0]["output"]["turn_duration_ms"]
+                 for turn_id, _ in ct_reader.turn_ends(ct_reader.load(path))}
+    # Before, u1 ran to the /compact's caveat (49) and u2 to the next queued prompt (30).
+    assert durations == {"u1": 5, "k1": 5, "u2": 3}
+
+
 def test_a_fork_drops_its_copy_of_the_parents_history(tmp_path):
     import json as _json
 
