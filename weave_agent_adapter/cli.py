@@ -232,11 +232,9 @@ def _evaluations_status(path: str) -> int:
 
 
 def cmd_evaluations(args) -> int:
-    import urllib.parse
-
     from . import dlq
     from .ces import CesClient, CesError, api_key_for, project_internal_id
-    from .ces_writer import CesWriter
+    from .ces_writer import CesWriter, create_dataset
     from .config import load_config, load_evaluations_state, save_evaluations_state
     from .redact import Redactor
 
@@ -253,13 +251,9 @@ def cmd_evaluations(args) -> int:
                 print('set [evaluations].project = "entity/project" in config.toml', file=sys.stderr)
                 return 2
             scope_ref = project_internal_id(ev.wandb_base_url, api_key, entity, project)
-            scope = f"/v1/namespaces/wandb/scopes/{urllib.parse.quote(scope_ref, safe='')}"
-            dataset = client.post(f"{scope}/datasets",
-                                  {"name": ev.name, "attributes": {"source": "weave-agent-adapter"}},
-                                  f"dataset-v1:{ev.project}:{ev.name}")
-            CesWriter(client, scope_ref, dataset["dataset_id"]).declare_fields()
-            state = {"project": ev.project, "name": ev.name, "scope_ref": scope_ref,
-                     "dataset_id": dataset["dataset_id"]}
+            dataset_id = create_dataset(client, scope_ref, ev.project, ev.name)
+            CesWriter(client, scope_ref, dataset_id).declare_fields()
+            state = {"project": ev.project, "name": ev.name, "scope_ref": scope_ref, "dataset_id": dataset_id}
             save_evaluations_state(state)
             print(json.dumps(state, indent=2))
             return 0
@@ -322,10 +316,8 @@ def _replay_entry(writer, entry: dict, redactor) -> None:
 
 def _log_transcript(args, cfg, client, state) -> int:
     """Log one finished session transcript to a named Dataset and print its session IDs."""
-    import urllib.parse
-
     from . import __version__, records
-    from .ces_writer import DEFAULT_STATE_DIR, CesWriter
+    from .ces_writer import DEFAULT_STATE_DIR, CesWriter, create_dataset
     from .redact import Redactor
     from .session_sender import READERS, transcript_jobs
 
@@ -340,11 +332,7 @@ def _log_transcript(args, cfg, client, state) -> int:
     if not jobs:
         print(f"{args.file} has no turns", file=sys.stderr)
         return 1
-    scope = f"/v1/namespaces/wandb/scopes/{urllib.parse.quote(state['scope_ref'], safe='')}"
-    dataset = client.post(f"{scope}/datasets",
-                          {"name": args.dataset, "attributes": {"source": "weave-agent-adapter"}},
-                          f"dataset-v1:{state['project']}:{args.dataset}")
-    dataset_id = dataset["dataset_id"]
+    dataset_id = create_dataset(client, state["scope_ref"], state["project"], args.dataset)
     # Each Dataset keeps its own session files, so a session logged here never reuses a live one's IDs.
     writer = CesWriter(client, state["scope_ref"], dataset_id, state_dir=os.path.join(DEFAULT_STATE_DIR, dataset_id),
                        rollout_context=cfg.evaluations.rollout_context)

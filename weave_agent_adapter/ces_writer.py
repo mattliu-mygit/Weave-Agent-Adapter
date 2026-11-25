@@ -40,6 +40,19 @@ def rollout_context(role: str, dataset_id: str, record_key: str) -> dict:
             "models_run_ref": None, "trace_ref": None}
 
 
+def scope_path(scope_ref: str, namespace: str = "wandb") -> str:
+    return f"/v1/namespaces/{namespace}/scopes/{urllib.parse.quote(scope_ref, safe='')}"
+
+
+def create_dataset(client, scope_ref: str, project: str, name: str) -> str:
+    """Create the Dataset `name` in the project, or get the one an earlier call created, and return its ID.
+    `evaluations setup` and `log-transcript` both call this, so the same name always gets the same Dataset."""
+    dataset = client.post(f"{scope_path(scope_ref)}/datasets",
+                          {"name": name, "attributes": {"source": "weave-agent-adapter"}},
+                          f"dataset-v1:{project}:{name}")
+    return dataset["dataset_id"]
+
+
 def already_stored(error) -> bool:
     """CES holds a different body under this key, which only an earlier write of this turn sent."""
     return getattr(error, "status", None) == 409 and getattr(error, "code", None) == "idempotency_key_reuse"
@@ -59,8 +72,7 @@ class SubagentDeferred(Exception):
 class CesWriter:
     def __init__(self, client, scope_ref: str, dataset_id: str, state_dir: str | None = None,
                  namespace: str = "wandb", rollout_context: bool = False):
-        scope = urllib.parse.quote(scope_ref, safe="")
-        self.scope_path = f"/v1/namespaces/{namespace}/scopes/{scope}"
+        self.scope_path = scope_path(scope_ref, namespace)
         base = f"{self.scope_path}/datasets/{dataset_id}"
         self.cases_path, self.trajectories_path = base + "/cases", base + "/trajectories"
         self.fields_path = base + "/fields"
