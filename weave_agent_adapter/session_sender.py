@@ -61,14 +61,14 @@ class _Job:
 
 class SessionSender:
     def __init__(self, writer, dlq_path: str, redactor, adapter_version: str,
-                 harnesses=("codex",), config_paths: dict | None = None, session_rate: float = 1.0):
+                 harnesses=("codex",), config_surfaces: dict | None = None, session_rate: float = 1.0):
         self.writer = writer
         self.session_rate = session_rate
         self.dlq_path = dlq_path
         self.redactor = redactor
         self.adapter_version = adapter_version
         self.harnesses = set(harnesses) & set(READERS)
-        self.config_paths = config_paths or {}
+        self.config_surfaces = config_surfaces or {}   # harness -> its profile's [config_surface]
         self.sessions: dict = {}
         self._queue: queue.Queue = queue.Queue()
         self._lock = threading.Lock()
@@ -167,8 +167,9 @@ class SessionSender:
             self._thread.join(5.0)
 
     def _enqueue(self, sid: str, s: _Session, turn_id, sweep: bool = False, final: bool = False) -> None:
-        if s.config_version is None and self.config_paths.get(s.harness):
-            s.config_version = config_version(self.config_paths[s.harness], cwd=s.cwd)
+        surface = self.config_surfaces.get(s.harness) or {}
+        if s.config_version is None and surface.get("paths"):
+            s.config_version = config_version(surface["paths"], cwd=s.cwd, exclude=surface.get("exclude"))
         ctx = TurnContext(s.harness, sid, s.permission_mode, s.trace_role, self.adapter_version,
                           s.config_version)
         facts = {k: ToolFacts(v.hook_tool_name, v.permission_requested, v.completed)

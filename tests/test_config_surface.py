@@ -53,6 +53,71 @@ def test_noise_files_do_not_affect_hash(tmp_path):
     assert config_version([str(d)]) == before
 
 
+def _linked_skills(tmp_path):
+    # Skills kept elsewhere and linked into the folder the profile names, as
+    # ~/.codex/skills links into ~/.claude/skills.
+    shared = tmp_path / "shared"
+    (shared / "review").mkdir(parents=True)
+    (shared / "review" / "SKILL.md").write_text("review v1")
+    (shared / "plan.md").write_text("plan v1")
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    (skills / "local.md").write_text("local skill")
+    (skills / "review").symlink_to(shared / "review", target_is_directory=True)
+    (skills / "plan.md").symlink_to(shared / "plan.md")
+    return shared, skills
+
+
+def test_edit_behind_a_symlinked_skill_file_changes_the_version(tmp_path):
+    shared, skills = _linked_skills(tmp_path)
+    before = config_version([str(skills)])
+    (shared / "plan.md").write_text("plan v2")
+    assert config_version([str(skills)]) != before
+
+
+def test_edit_inside_a_symlinked_skill_directory_changes_the_version(tmp_path):
+    shared, skills = _linked_skills(tmp_path)
+    before = config_version([str(skills)])
+    (shared / "review" / "SKILL.md").write_text("review v2")
+    assert config_version([str(skills)]) != before
+
+
+def test_moving_a_symlink_target_with_the_same_content_keeps_the_version(tmp_path):
+    shared, skills = _linked_skills(tmp_path)
+    before = config_version([str(skills)])
+    moved = tmp_path / "moved"
+    shared.rename(moved)
+    (skills / "review").unlink()
+    (skills / "review").symlink_to(moved / "review", target_is_directory=True)
+    (skills / "plan.md").unlink()
+    (skills / "plan.md").symlink_to(moved / "plan.md")
+    assert config_version([str(skills)]) == before
+
+
+def test_a_symlink_loop_ends_and_each_file_counts_once(tmp_path):
+    skills = tmp_path / "skills"
+    (skills / "a").mkdir(parents=True)
+    (skills / "a" / "SKILL.md").write_text("skill a")
+    (skills / "a" / "up").symlink_to(skills, target_is_directory=True)      # a/up -> skills
+    looped = config_version([str(skills)])
+    (skills / "a" / "up").unlink()
+    assert looped == config_version([str(skills)])
+
+
+def test_excluded_paths_do_not_affect_the_version(tmp_path):
+    skills = tmp_path / "skills"
+    (skills / "managed").mkdir(parents=True)
+    (skills / "managed" / "SKILL.md").write_text("v1")
+    (skills / "mine.md").write_text("mine")
+    exclude = [str(skills / "managed")]
+    before = config_version([str(skills)], exclude=exclude)
+    (skills / "managed" / "SKILL.md").write_text("v2")
+    (skills / "managed" / "new.md").write_text("new")
+    assert config_version([str(skills)], exclude=exclude) == before
+    (skills / "mine.md").write_text("mine v2")
+    assert config_version([str(skills)], exclude=exclude) != before
+
+
 def test_cwd_and_slug_placeholders(tmp_path):
     proj = tmp_path / "repo"
     proj.mkdir()
@@ -124,3 +189,22 @@ def test_codex_surface_includes_the_session_cwd_agents_md(tmp_path, monkeypatch)
     assert with_repo != without
     (repo / "AGENTS.md").write_text("repo rules v2")
     assert config_version(paths, cwd=str(repo)) != with_repo
+
+
+def test_codex_surface_ignores_codex_managed_system_skills(tmp_path, monkeypatch):
+    from weave_agent_adapter.profile import load_profile
+
+    codex = _codex_home(tmp_path, monkeypatch)
+    system = codex / "skills" / ".system"
+    (system / "imagegen").mkdir(parents=True)
+    (system / "imagegen" / "SKILL.md").write_text("bundled v1")
+    surface = load_profile("codex").config_surface
+    before = config_version(surface["paths"], exclude=surface.get("exclude"))
+
+    # A Codex upgrade rewrites its bundled skills; the user edited nothing.
+    (system / "imagegen" / "SKILL.md").write_text("bundled v2")
+    (system / ".codex-system-skills.marker").write_text("0.2")
+    assert config_version(surface["paths"], exclude=surface.get("exclude")) == before
+
+    (codex / "skills" / "review" / "SKILL.md").write_text("review skill v2")
+    assert config_version(surface["paths"], exclude=surface.get("exclude")) != before

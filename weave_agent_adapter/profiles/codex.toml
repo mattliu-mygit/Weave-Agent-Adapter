@@ -56,6 +56,9 @@ paths = [
   "~/.codex/rules",
   "{cwd}/AGENTS.md",
 ]
+# Codex installs and rewrites its bundled skills here itself, so a Codex
+# upgrade would change the version with no edit by the user.
+exclude = ["~/.codex/skills/.system"]
 
 [registration]
 user_path  = "~/.codex/hooks.json"           # install (default scope)

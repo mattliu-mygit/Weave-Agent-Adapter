@@ -85,11 +85,14 @@ def test_a_codex_session_carries_the_config_version_of_its_hook_cwd(tmp_path, mo
     (home / ".codex" / "AGENTS.md").write_text("be concise")
     repo.mkdir()
     (repo / "AGENTS.md").write_text("repo rules")
+    (home / ".codex" / "skills" / ".system").mkdir(parents=True)
+    (home / ".codex" / "skills" / ".system" / "SKILL.md").write_text("bundled by Codex")
     monkeypatch.setenv("HOME", str(home))
-    paths = load_profile("codex").config_surface["paths"]
+    surface = load_profile("codex").config_surface
+    paths, exclude = surface["paths"], surface["exclude"]
     transcript = ct.write(tmp_path / "t.jsonl", ct.exec_turn())
     writer = _Writer()
-    sender = _sender(tmp_path, writer, config_paths={"codex": paths})
+    sender = _sender(tmp_path, writer, config_surfaces={"codex": surface})
 
     # Codex sends the session's working directory as `cwd` on every hook; {cwd} expands to it.
     sender.handle(_event("SessionStart", 1.0, session_id="T1", transcript_path=transcript, cwd=str(repo)))
@@ -98,8 +101,9 @@ def test_a_codex_session_carries_the_config_version_of_its_hook_cwd(tmp_path, mo
 
     [job] = writer.jobs
     version = job["session_case"]["input"]["config_version"]
-    assert version == config_version(paths, cwd=str(repo))
-    assert version not in (None, config_version(paths))      # the repo's AGENTS.md counted
+    assert version == config_version(paths, cwd=str(repo), exclude=exclude)
+    assert version not in (None, config_version(paths, exclude=exclude))   # the repo's AGENTS.md counted
+    assert version != config_version(paths, cwd=str(repo))   # the profile's exclude reached the sender
     assert {case["input"]["config_version"] for case in job["turns"][0]["cases"]} == {version}
 
 def _two_turns(tmp_path):

@@ -192,15 +192,15 @@ def _session_sender(cfg, redactor, profiles_dir=None):
             diagnose("ces_config_mismatch")     # rerun `weave-agent-adapter evaluations setup`
             return None
         client = CesClient(ev.base_url, api_key_for(ev.wandb_base_url))
-        paths = {}
+        surfaces = {}
         for harness in ev.harnesses:
             try:
-                paths[harness] = (load_profile(harness, profiles_dir).config_surface or {}).get("paths")
+                surfaces[harness] = load_profile(harness, profiles_dir).config_surface
             except Exception:
                 pass                            # fingerprinting must never stop sending
         writer = CesWriter(client, state["scope_ref"], state["dataset_id"], rollout_context=ev.rollout_context)
         return SessionSender(writer, dlq.DEFAULT_PATH, redactor, __version__, harnesses=ev.harnesses,
-                             config_paths=paths, session_rate=cfg.session_rate)
+                             config_surfaces=surfaces, session_rate=cfg.session_rate)
     except Exception as exc:
         diagnose("ces_config", error=exc)
         return None
