@@ -25,8 +25,8 @@ claude-code session 7f3c…            a session Trajectory
 └── assistant_message  "done"
 ```
 
-Each finished turn is written once, in order, under keys built from its
-content, so a sidecar restart or a replay never duplicates it.
+Each finished turn is written once, in order, under keys built from the session
+and turn IDs, so a sidecar restart or a replay never duplicates it.
 [specs/EVALUATIONS_CASE_CONTRACT.md](specs/EVALUATIONS_CASE_CONTRACT.md) has the
 layout, the field contract, and the write order.
 
@@ -171,13 +171,13 @@ diagnostics.
 Claude Code and Codex sessions are read from their transcripts, and the hooks
 add what the transcripts lack: permission prompts, the permission mode, and
 subagent transcript paths. Missing optional hook data degrades by omission.
+A last turn is sent when its `Stop` or the session's `SessionEnd` arrives.
+Codex has no `SessionEnd`, so a Codex session killed before its last turn's
+`Stop` loses that turn.
 
 Gemini CLI's hooks register, but its sessions aren't recorded yet: the sidecar
 ignores events from a harness without a transcript reader, and Gemini's
 transcript format is unverified.
-
-Claude Code's `PermissionDenied` hook covers auto-mode classifier denials, not
-denials made in the manual permission dialog.
 
 ## Runtime and privacy
 

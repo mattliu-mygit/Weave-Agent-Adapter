@@ -18,13 +18,10 @@ import time
 from . import transport
 from .model import DEFAULT_TRACE_ROLE, SUPPORTED_WIRE_VERSION, WireEvent, normalize_trace_role
 from .diagnostics import diagnose
-from .session_sender import READERS
 
 ACCEPT_TIMEOUT_S = 0.5
-
-
-
 MAX_CONNECTION_BYTES = 4 * 1024 * 1024
+
 
 class Sidecar:
     def __init__(self, socket_path, idle_s=120.0, session_ttl=3600.0, sweep_interval=30.0,

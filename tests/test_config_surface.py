@@ -130,6 +130,17 @@ def test_excluded_paths_do_not_affect_the_version(tmp_path):
     assert config_version([str(skills)], exclude=exclude) != before
 
 
+def test_an_excluded_path_with_a_trailing_slash_still_matches(tmp_path):
+    skills = tmp_path / "skills"
+    (skills / "managed").mkdir(parents=True)
+    (skills / "managed" / "SKILL.md").write_text("v1")
+    (skills / "mine.md").write_text("mine")
+    exclude = [str(skills / "managed") + "/"]
+    before = config_version([str(skills)], exclude=exclude)
+    (skills / "managed" / "SKILL.md").write_text("v2")
+    assert config_version([str(skills)], exclude=exclude) == before
+
+
 def test_cwd_and_slug_placeholders(tmp_path):
     proj = tmp_path / "repo"
     proj.mkdir()

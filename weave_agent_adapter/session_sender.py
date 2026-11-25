@@ -377,7 +377,7 @@ def agent_turns(reader, t, paths, decisions, ctx, redactor, sent=frozenset(), fi
 def transcript_jobs(reader, t, ctx: TurnContext, redactor, agents=(), final=True) -> list:
     """Every turn of a loaded transcript as (key, job), oldest first.
 
-    For a session that is over (`final`), every turn is final, as in the idle sweep;
+    For a session that is over (`final`), every turn is final, as at `SessionEnd`;
     otherwise an unended last turn may still be running and is left out. Subagent turns,
     from the transcript's own subagent files and `agents`, ride on the last turn's job."""
     ends = reader.turn_ends(t)

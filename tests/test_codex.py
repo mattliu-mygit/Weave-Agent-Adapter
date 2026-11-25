@@ -6,7 +6,6 @@ import json
 from weave_agent_adapter.install import install
 
 
-
 def test_codex_install_targets_codex_hooks_json(tmp_path):
     path = str(tmp_path / "hooks.json")
     install("codex", path=path)

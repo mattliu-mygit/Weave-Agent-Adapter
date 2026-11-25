@@ -38,9 +38,10 @@ for harnesses that require a JSON acknowledgment. A missing sidecar is started
 once and retried within the same short deadline. No hook performs network I/O
 or writes raw payloads.
 
-The sidecar owns redaction, transcript reading, and CES writes. One sidecar multiplexes harnesses and sessions. The
-session sender keeps what the transcripts lack, such as permission prompts, the
-permission mode, and subagent transcript paths. When a turn ends, it hands a
+The sidecar owns redaction, transcript reading, and CES writes. One sidecar
+multiplexes harnesses and sessions. The session sender keeps what the
+transcripts lack, such as permission prompts, the permission mode, and subagent
+transcript paths. When a turn ends, it hands a
 job to its worker thread. Events from a harness without a transcript reader are
 ignored.
 
@@ -52,24 +53,33 @@ event loses only what that event gives.
 ## State and lifecycle
 
 A Codex `Stop` names the turn it ends. A Claude Code `Stop` ends the
-transcript's last turn, unless background tasks are still running. When a
-session goes idle past its TTL, every turn not yet written is sent as final,
-which covers interrupted turns and turns whose `Stop` was skipped. A parent
+transcript's last turn, unless background tasks are still running. A parent
 turn's job carries the finished turns of its subagents.
+
+When a session goes idle past its TTL, and for every session when the sidecar
+exits, the idle sweep sends each turn that has ended but isn't written, such as
+an interrupted turn or one whose `Stop` was skipped. It never sends a last turn
+that hasn't ended: the sidecar exits after its idle deadline, 120 s by default,
+while a tool call can run longer, and a turn sent early would stay incomplete
+because CES never rewrites a Case. That turn waits for its `Stop`, or for `SessionEnd`,
+which sends it as final. Codex has no `SessionEnd`, so a Codex session killed
+before its last turn's `Stop` loses that turn.
 
 The writer keeps each session's CES IDs and written turns in a per-session
 file, so a restarted sidecar continues the same Trajectory and never resends a
-written turn. The sidecar exits after its idle deadline only when no job is
-pending. Shutdown gives queued jobs a bounded time, then moves what is left to
-the dead-letter file.
+written turn. Beside it, the session sender keeps what hooks reported that a
+later turn still needs, the subagent transcript paths and the permission
+prompts, because the sidecar forgets its sessions when it exits. `SessionEnd`
+removes the prompts file. The sidecar exits after its idle deadline only when no
+job is pending. Shutdown gives queued jobs a bounded time, then moves what is
+left to the dead-letter file.
 
 ## Reliability and privacy
 
-Every write carries an idempotency key built from the turn, so a retry or a
+Every write carries an idempotency key built from the session and turn IDs, so a retry or a
 replay never duplicates a Case. Rate limits and unavailability are retried. A
 turn that still fails is kept whole in the dead-letter file, and
-`weave-agent-adapter evaluations replay` reruns it from the top. A hook-built
-turn that is still open when the sidecar dies is lost.
+`weave-agent-adapter evaluations replay` reruns it from the top.
 
 Redaction occurs before any network output. Sensitive keys, common token
 shapes, JWTs, AWS access-key IDs, and complete PEM private-key blocks are

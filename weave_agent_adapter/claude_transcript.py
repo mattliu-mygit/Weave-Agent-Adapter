@@ -269,8 +269,8 @@ def _turns(t: Transcript) -> list:
     the new rows that follow the copy (`_rewritten`)."""
     starts, copies = _starts(t), _copies(t)
     kept = [(index, i) for index, i in enumerate(starts, start=1) if i not in copies]
-    ends = [i for _, i in kept[1:]] + [len(t.rows)]
-    return [(index, i, j) for (index, i), j in zip(kept, ends)]
+    next_starts = [i for _, i in kept[1:]] + [len(t.rows)]
+    return [(index, i, j) for (index, i), j in zip(kept, next_starts)]
 
 
 def _rewritten(t: Transcript) -> set:
@@ -288,7 +288,7 @@ def _rewritten(t: Transcript) -> set:
     compacts = {k for i, b in _compact_boundaries(t).items() for k in range(b, i)}
     rewritten, inside, latest = set(), False, float("-inf")
     for k, row in enumerate(t.rows):
-        stamp = None if k in copies else records.ms(row.get("timestamp"))
+        stamp = records.ms(row.get("timestamp"))
         if k in starts:
             inside = k in copies
         elif inside and stamp is not None and stamp > latest and k not in compacts:
@@ -516,11 +516,11 @@ def turn_records(t: Transcript, turn: TurnRecords, decisions: dict, ctx: TurnCon
             compactions += 1
 
     stamps = [ms for r in rows if (ms := records.ms(r.get("timestamp"))) is not None]
-    ends = [ms for r in rows if _is_work(t, r) and (ms := records.ms(r.get("timestamp"))) is not None]
+    work_ms = [ms for r in rows if _is_work(t, r) and (ms := records.ms(r.get("timestamp"))) is not None]
     tools = [s["output"] for s in steps if s["kind"] == "tool_call"]
     totals = {
         "turn_status": turn.end_type or "incomplete",
-        "turn_duration_ms": ends[-1] - stamps[0] if stamps and ends else None,
+        "turn_duration_ms": work_ms[-1] - stamps[0] if stamps and work_ms else None,
         **{f"turn_{k}_tokens": v for k, v in totals_tokens.items()}, "turn_reasoning_tokens": None,
         "turn_steering_count": max(0, len(typed) - 1),
         "turn_denial_count": sum(1 for out in tools if out["permission_decision"] == "not_approved"),

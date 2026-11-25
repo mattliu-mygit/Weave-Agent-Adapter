@@ -1,9 +1,10 @@
 """Write one turn job to CES in order: the session Case and Trajectory, then the turn's Cases.
 
-Every request carries an Idempotency-Key built from what it writes, and a replay
-sends a byte-identical body, so CES answers a repeat with the original IDs. The
-per-session file keeps the IDs, and each body before it is sent: after a crash
-between sending and saving, resending the stored body recovers the ID.
+Every write carries an Idempotency-Key built from the IDs of what it writes, such as
+the session and turn, and a replay sends a byte-identical body, so CES answers a
+repeat with the original IDs. The per-session file keeps the IDs, and each body
+before it is sent: after a crash between sending and saving, resending the stored
+body recovers the ID.
 
 A turn job is a JSON object (`codex_transcript.turn_records` builds its turns):
 

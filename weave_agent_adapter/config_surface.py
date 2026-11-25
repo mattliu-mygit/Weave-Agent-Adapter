@@ -12,8 +12,8 @@ Placeholders: `~` (home), `{cwd}` (session cwd),
 
 Content-hashed (not mtimes) so the id is stable across restarts and machines.
 Symlinked files and directories count by their target's content, under the
-path the profile entry shows. Missing paths are skipped; if nothing exists at
-all the version is None.
+path the profile entry shows. `.git`, `__pycache__`, and `.DS_Store` are
+skipped. Missing paths are skipped; if nothing exists at all the version is None.
 """
 from __future__ import annotations
 

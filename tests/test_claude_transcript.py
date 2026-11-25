@@ -388,6 +388,16 @@ def test_a_turn_ends_at_its_last_message_tool_result_interruption_or_compaction(
     assert durations == {"u1": 5, "k1": 5, "u2": 3}
 
 
+def test_a_subagents_row_in_the_main_file_does_not_extend_the_turn(tmp_path):
+    path = ct.write(tmp_path / "S1.jsonl", [
+        ct.prompt(1, "u1", "build it"),
+        ct.assistant(2, "a-1", "msg_1", [ct.text("Built.")], stop_reason="end_turn"),
+        ct.assistant(30, "b-1", "msg_b", [ct.text("subagent work")], stop_reason="end_turn", agent="x1"),
+    ])
+
+    assert _records(path, "u1")["cases"][0]["output"]["turn_duration_ms"] == 1
+
+
 def test_a_fork_drops_its_copy_of_the_parents_history(tmp_path):
     import json as _json
 

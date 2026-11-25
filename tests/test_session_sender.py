@@ -87,7 +87,6 @@ def test_a_stop_sends_its_turn_with_the_subagent_turns_it_ran(tmp_path):
     assert [(t["agent_id"], t["turn_id"]) for t in job["turns"]] == [(None, "P1"), ("C1", "K1")]
 
 
-
 def test_a_codex_session_carries_the_config_version_of_its_hook_cwd(tmp_path, monkeypatch):
     home, repo = tmp_path / "home", tmp_path / "repo"
     (home / ".codex").mkdir(parents=True)
@@ -114,6 +113,7 @@ def test_a_codex_session_carries_the_config_version_of_its_hook_cwd(tmp_path, mo
     assert version not in (None, config_version(paths, exclude=exclude))   # the repo's AGENTS.md counted
     assert version != config_version(paths, cwd=str(repo))   # the profile's exclude reached the sender
     assert {case["input"]["config_version"] for case in job["turns"][0]["cases"]} == {version}
+
 
 def _two_turns(tmp_path):
     return cl.write(tmp_path / "s.jsonl", [
