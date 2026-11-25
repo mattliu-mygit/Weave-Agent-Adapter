@@ -438,3 +438,71 @@ def test_a_workflow_call_starts_the_subagents_in_the_workflow_directory_its_resu
     t = ct_reader.load(session)
 
     assert ct_reader.launch_sites(t) == {"w1": ["u1", "toolu_wf"]}
+
+
+def _queued(ms):
+    return {"type": "queue-operation", "operation": "enqueue", "timestamp": ct.ts(ms), "sessionId": ct.SESSION}
+
+
+def test_a_session_started_from_another_leaves_out_the_turns_it_copied(tmp_path):
+    """Session d258ec50, started in Claude Desktop from ae268659: its file begins with ae268659's rows
+    from the last compaction on, uuids and timestamps included, before its own first prompt is queued.
+    Those turns are ae268659's and were written under that session."""
+    copied = [ct.compact(5, "c1", trigger="manual"),
+              ct.prompt(10, "p1", "fix the bug"),
+              ct.assistant(11, "a-1", "msg_1", [ct.text("fixed")], stop_reason="end_turn"),
+              ct.prompt(20, "p2", "add a test"),
+              ct.assistant(21, "a-2", "msg_2", [ct.text("added")], stop_reason="end_turn")]
+    t = ct_reader.load(ct.write(tmp_path / "S2.jsonl", [
+        {"type": "custom-title", "customTitle": "Ship it", "sessionId": ct.SESSION},
+        _queued(99), *copied,
+        ct.prompt(100, "b1", "now ship it"),
+        ct.assistant(101, "a-3", "msg_3", [ct.text("shipped")], stop_reason="end_turn"),
+    ]))
+
+    assert ct_reader.turn_ends(t) == [("b1", "completed")]
+    # The copied prompts still count, as copies within one file do.
+    assert ct_reader.select_turn(t, "b1").index == 3
+    assert [(c["input"]["kind"], c["input"]["started_at"]) for c in _records(t.path, "b1")["cases"]] == [
+        ("user_message", ct.ts(100)), ("assistant_message", ct.ts(101))]
+
+
+def test_a_pr_link_row_stamped_after_the_first_prompt_does_not_hide_it(tmp_path):
+    """Sessions 5b3999bb, a2e6c820 and 8cc3dede: Claude Desktop writes a pr-link row among the header rows
+    at the top of the file, stamped just after the session's first prompt."""
+    t = ct_reader.load(ct.write(tmp_path / "S1.jsonl", [
+        {"type": "pr-link", "prNumber": 1, "timestamp": ct.ts(2), "sessionId": ct.SESSION},
+        _queued(0),
+        ct.prompt(1, "u1", "open a PR"),
+        ct.assistant(3, "a-1", "msg_1", [ct.text("opened")], stop_reason="end_turn"),
+    ]))
+
+    assert ct_reader.turn_ends(t) == [("u1", "completed")]
+    session = ct_reader.session_case(t, ct_reader.select_turn(t, "u1"), _ctx())
+    assert session["input"]["started_at"] == ct.ts(0)
+
+
+def test_a_session_whose_file_copies_another_sessions_whole_file_leaves_out_those_turns(tmp_path):
+    """Session dfcc8bec, started in Claude Desktop from 5b3999bb: its file begins with all of 5b3999bb's
+    rows, that session's ID included, then its own rows under its own ID."""
+    copied = [_queued(0), ct.prompt(1, "p1", "fix the bug"),
+              ct.assistant(2, "a-1", "msg_1", [ct.text("fixed")], stop_reason="end_turn")]
+    own = [{"type": "custom-title", "customTitle": "Ship it"}, _queued(99), ct.prompt(100, "b1", "now ship it"),
+           ct.assistant(101, "a-2", "msg_2", [ct.text("shipped")], stop_reason="end_turn")]
+    session = ct.write(tmp_path / "S2.jsonl", [*copied, *[{**row, "sessionId": "S2"} for row in own]])
+    # The earlier session's subagent files are copied too. Their launching turns aren't this session's,
+    # so CES couldn't root them.
+    ct.write_subagent(session, "x1", "toolu_old", 1, [
+        ct.prompt(3, "s1", "count", agent="x1"),
+        ct.assistant(4, "b-1", "msg_x1", [ct.text("3")], stop_reason="end_turn", agent="x1")])
+    own_agent = ct.write_subagent(session, "y1", "toolu_new", 1, [
+        {**row, "sessionId": "S2"} for row in (
+            ct.prompt(102, "s2", "count", agent="y1"),
+            ct.assistant(103, "b-2", "msg_y1", [ct.text("3")], stop_reason="end_turn", agent="y1"))])
+    t = ct_reader.load(session)
+
+    assert ct_reader.turn_ends(t) == [("b1", "completed")]
+    assert ct_reader.thread_id(t) == "S2"
+    assert ct_reader.subagent_paths(t) == [own_agent]
+    session = ct_reader.session_case(t, ct_reader.select_turn(t, "b1"), _ctx())
+    assert session["input"]["started_at"] == ct.ts(99)

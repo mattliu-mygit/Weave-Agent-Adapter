@@ -94,14 +94,47 @@ def _agent_files(t: Transcript, pattern: str) -> list:
 
 
 def subagent_paths(t: Transcript) -> list:
-    """Every subagent file of this session, so a parent turn's job can carry their turns."""
+    """Every subagent file of this session, so a parent turn's job can carry their turns. A session
+    Claude Desktop starts from another can get copies of that session's subagent files, whose rows name
+    that session. Their launching turns are the other session's, so they are left out."""
     if t.agent_id is not None:
         return []
-    return _agent_files(t, "agent-*.jsonl")
+    sid = _session_id(t)
+    return [path for path in _agent_files(t, "agent-*.jsonl") if _first_session_id(path) in (sid, None)]
+
+
+def _first_session_id(path: str):
+    try:
+        with open(path, "rb") as fh:
+            for line in fh:
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(row, dict) and row.get("sessionId"):
+                    return row["sessionId"]
+    except OSError:
+        pass                        # `load` reports a file that can't be read
+    return None
+
+
+def _session_id(t: Transcript):
+    """The session writing this file, which its last rows name. A session Claude Desktop starts from
+    another can begin with a copy of that session's rows, that session's ID included."""
+    return next((r["sessionId"] for r in reversed(t.rows) if r.get("sessionId")), None)
+
+
+def _started(t: Transcript) -> int | None:
+    """When this file's session started: its first stamped row of that session. A session Claude Desktop
+    starts from another begins with that session's rows, original timestamps included, and a pr-link row
+    sits among the header rows at the top, stamped after the session's first prompt."""
+    sid = _session_id(t)
+    return next((ms for row in t.rows if row.get("sessionId") == sid and row.get("type") != "pr-link"
+                 and (ms := records.ms(row.get("timestamp"))) is not None), None)
 
 
 def thread_id(t: Transcript):
-    return t.agent_id or next((r["sessionId"] for r in t.rows if r.get("sessionId")), None)
+    return t.agent_id or _session_id(t)
 
 
 def parent_thread_id(t: Transcript):
@@ -117,7 +150,7 @@ def parent_thread_id(t: Transcript):
         with open(path, encoding="utf-8", errors="replace") as fh:
             if f'"{call}"' in fh.read():
                 return load(path).agent_id
-    return next((r["sessionId"] for r in t.rows if r.get("sessionId")), None)
+    return _session_id(t)
 
 
 def _content(row: dict):
@@ -203,10 +236,15 @@ def _starts(t: Transcript) -> list:
 
 
 def _copies(t: Transcript) -> set:
-    """Positions of rows that repeat an earlier row's uuid. When Claude Desktop compacts a session it
-    has compacted before, it first appends a copy of rows starting at that earlier compact boundary,
-    original uuids and timestamps included. The copy's first rows would otherwise join the last turn
-    and, being older, sort before its prompt."""
+    """Positions of rows that repeat an earlier row's uuid, and of prompts another session wrote.
+
+    When Claude Desktop compacts a session it has compacted before, it first appends a copy of rows
+    starting at that earlier compact boundary, original uuids and timestamps included. The copy's first
+    rows would otherwise join the last turn and, being older, sort before its prompt.
+
+    A session Claude Desktop starts from another begins with that session's rows, original uuids and
+    timestamps included, so their prompts are stamped before the session started (`_started`). Those
+    turns are the other session's."""
     if "copies" in t.cache:
         return t.cache["copies"]
     seen, copies = set(), set()
@@ -216,6 +254,10 @@ def _copies(t: Transcript) -> set:
             copies.add(i)
         elif uuid:
             seen.add(uuid)
+    started = _started(t)
+    if started is not None:
+        copies |= {i for i in _starts(t)
+                   if (ms := records.ms(t.rows[i].get("timestamp"))) is not None and ms < started}
     t.cache["copies"] = copies
     return copies
 
@@ -322,8 +364,7 @@ def _context(t: Transcript, turn: TurnRecords) -> dict:
 
 
 def session_case(t: Transcript, turn: TurnRecords, ctx: TurnContext) -> dict:
-    first = next((r for r in t.rows if r.get("timestamp")), {})
-    return records.session_case(ctx, _context(t, turn), records.iso(records.ms(first.get("timestamp"))))
+    return records.session_case(ctx, _context(t, turn), records.iso(_started(t)))
 
 
 def _decision(facts: ToolFacts | None, result_row: dict | None) -> str | None:
