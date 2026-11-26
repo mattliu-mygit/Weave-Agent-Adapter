@@ -156,6 +156,17 @@ def test_written_turns_survive_a_restart(fake, tmp_path):
     assert _writer(fake, tmp_path).written_turns("codex", "T3") == {"P1", "K1"}
 
 
+def test_the_session_case_input_is_saved_at_its_first_send_even_when_the_send_fails(fake, tmp_path):
+    job = _job(tmp_path)
+    assert _writer(fake, tmp_path).session_case_input("codex", "T3") is None
+    _failing_once(fake, "session-v1:codex:T3", 503, "unavailable")
+
+    with pytest.raises(CesError):
+        _writer(fake, tmp_path).write_turn(job)
+
+    assert _writer(fake, tmp_path).session_case_input("codex", "T3") == job["session_case"]["input"]
+
+
 def test_rollout_context_rides_on_new_trajectories_when_turned_on(fake, tmp_path):
     writer = CesWriter(CesClient(fake.url, "key", attempts=1), "S", "D", state_dir=str(tmp_path / "sessions"),
                        rollout_context=True)

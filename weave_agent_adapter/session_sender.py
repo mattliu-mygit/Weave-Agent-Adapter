@@ -47,6 +47,7 @@ class _Session:
     trace_role: str = DEFAULT_TRACE_ROLE
     cwd: str | None = None
     config_version: str | None = None
+    config_known: bool = False                     # config_version is decided for the session
     prompts: dict = field(default_factory=dict)    # tool_use_id of a permission prompt -> whether its call ran
 
 
@@ -172,9 +173,16 @@ class SessionSender:
             self._thread.join(5.0)
 
     def _enqueue(self, sid: str, s: _Session, turn_id, sweep: bool = False, final: bool = False) -> None:
-        surface = self.config_surfaces.get(s.harness) or {}
-        if s.config_version is None and surface.get("paths"):
-            s.config_version = config_version(surface["paths"], cwd=s.cwd, exclude=surface.get("exclude"))
+        if not s.config_known:
+            # Once per session, so every Case carries the session Case's version. A sidecar that
+            # exits forgets the session, so the next one takes the version from the saved session Case.
+            stored = self.writer.session_case_input(s.harness, sid)
+            surface = self.config_surfaces.get(s.harness) or {}
+            if stored is not None:
+                s.config_version = stored.get("config_version")
+            elif surface.get("paths"):
+                s.config_version = config_version(surface["paths"], cwd=s.cwd, exclude=surface.get("exclude"))
+            s.config_known = True
         ctx = TurnContext(s.harness, sid, s.permission_mode, s.trace_role, self.adapter_version,
                           s.config_version)
         decisions = {k: "approved" if ran else "not_approved" for k, ran in s.prompts.items()}

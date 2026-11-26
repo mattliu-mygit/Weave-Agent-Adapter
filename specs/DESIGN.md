@@ -66,10 +66,11 @@ which sends it as final. Codex has no `SessionEnd`, so a Codex session killed
 before its last turn's `Stop` loses that turn.
 
 The writer keeps each session's CES IDs and written turns in a per-session
-file, so a restarted sidecar continues the same Trajectory and never resends a
-written turn. Beside it, the session sender keeps what hooks reported that a
-later turn still needs, the subagent transcript paths and the permission
-prompts, because the sidecar forgets its sessions when it exits. `SessionEnd`
+file, so a restarted sidecar continues the same Trajectory, never resends a
+written turn, and gives later turns the session Case's `config_version`.
+Beside it, the session sender keeps what hooks reported that a later turn
+still needs, the subagent transcript paths and the permission prompts, because
+the sidecar forgets its sessions when it exits. `SessionEnd`
 removes the prompts file. The sidecar exits after its idle deadline only when no
 job is pending. Shutdown gives queued jobs a bounded time, then moves what is
 left to the dead-letter file.

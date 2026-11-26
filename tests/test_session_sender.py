@@ -54,6 +54,9 @@ class _Writer:
     def written_turns(self, harness, session_id):
         return set() if self.error else {turn["turn_id"] for job in self.jobs for turn in job["turns"]}
 
+    def session_case_input(self, harness, session_id):
+        return next((job["session_case"]["input"] for job in self.jobs if job["session_id"] == session_id), None)
+
 
 def _sender(tmp_path, writer, **kwargs):
     return SessionSender(writer, str(tmp_path / "dlq.jsonl"), _Plain(), "1.2.3", **kwargs)
@@ -113,6 +116,35 @@ def test_a_codex_session_carries_the_config_version_of_its_hook_cwd(tmp_path, mo
     assert version not in (None, config_version(paths, exclude=exclude))   # the repo's AGENTS.md counted
     assert version != config_version(paths, cwd=str(repo))   # the profile's exclude reached the sender
     assert {case["input"]["config_version"] for case in job["turns"][0]["cases"]} == {version}
+
+
+def test_a_restarted_sender_keeps_the_config_version_its_session_case_has(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "AGENTS.md").write_text("v1")
+    surfaces = {"codex": {"paths": ["{cwd}/AGENTS.md"]}}
+    rows = ct.interrupted_then_next()
+    transcript = ct.write(tmp_path / "t.jsonl", rows[:6])      # the first turn only
+    writer = _Writer()
+    sender = _sender(tmp_path, writer, config_surfaces=surfaces)
+    sender.handle(_event("Stop", 1.0, session_id="T2", transcript_path=transcript, cwd=str(repo), turn_id="A1"))
+    _finish(sender)
+
+    # The instructions change mid-session, and the sidecar exits and starts again.
+    (repo / "AGENTS.md").write_text("v2")
+    ct.write(transcript, rows)
+    sender = _sender(tmp_path, writer, config_surfaces=surfaces)
+    sender.handle(_event("Stop", 2.0, session_id="T2", transcript_path=transcript, cwd=str(repo), turn_id="B1"))
+    other_transcript = ct.write(tmp_path / "t9.jsonl", ct.exec_turn(thread="T9"))
+    sender.handle(_event("Stop", 3.0, session_id="T9", transcript_path=other_transcript, cwd=str(repo), turn_id="U1"))
+    _finish(sender)
+
+    first, second, other = writer.jobs
+    v1 = config_version(["{cwd}/AGENTS.md"], cwd=str(repo))
+    assert first["session_case"]["input"]["config_version"] != v1      # computed before the edit
+    assert {case["input"]["config_version"] for job in (first, second) for turn in job["turns"]
+            for case in turn["cases"]} == {first["session_case"]["input"]["config_version"]}
+    assert other["session_case"]["input"]["config_version"] == v1      # a new session takes the edit
 
 
 def _two_turns(tmp_path):

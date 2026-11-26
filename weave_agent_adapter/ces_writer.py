@@ -272,6 +272,11 @@ class CesWriter:
         """Turn IDs this session's file records as written, so a restart does not resend them."""
         return set(self._load(harness, sid)["turns"])
 
+    def session_case_input(self, harness: str, sid: str) -> dict | None:
+        """The session Case's input fields as its first send saved them, or None before that send."""
+        body = self._load(harness, sid)["session_case"].get("body")
+        return body["cases"][0]["input"] if body else None
+
     def session_ids(self, harness: str, sid: str) -> dict:
         """The session Case and Trajectory IDs this session's file records."""
         state = self._load(harness, sid)

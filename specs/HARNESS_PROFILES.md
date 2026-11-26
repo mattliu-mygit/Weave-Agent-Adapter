@@ -41,12 +41,14 @@ it, `trace_role` comes from the environment or the default.
 
 - `paths` lists the files and folders whose content is hashed into
   `config_version`, so Scores can be compared before and after an instruction
-  change. `~` is the home folder, `{cwd}` the session's working directory from
-  its hooks, and `{cwd_slug}` that directory with `/` replaced by `-`, as in
-  `~/.claude/projects`. An entry that needs `{cwd}` is skipped when no hook sent
-  one, and a missing path is skipped. Folders are walked with symlinks followed,
-  and a symlink's target counts under the path the profile shows, so moving the
-  target keeps the version. `.git`, `__pycache__`, `.DS_Store`, and `.pyc` files
+  change. The version is computed once per session, for its first send, so an
+  edit mid-session shows up in the next session. `~` is the home folder,
+  `{cwd}` the session's working directory from its hooks, and `{cwd_slug}` that
+  directory with `/` replaced by `-`, as in `~/.claude/projects`. An entry
+  that needs `{cwd}` is skipped when no hook sent one, and a missing path is
+  skipped. Folders are walked with symlinks followed, and a symlink's target
+  counts under the path the profile shows, so moving the target keeps the
+  version. `.git`, `__pycache__`, `.DS_Store`, and `.pyc` files
   are skipped, and at most 1,000 files of up to 1 MiB each are read.
 - `exclude` lists paths under `paths` to leave out, with the same placeholders.
   A path matches as seen through the profile entry, so it works whether a folder
