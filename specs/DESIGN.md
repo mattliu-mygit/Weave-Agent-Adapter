@@ -45,10 +45,10 @@ transcript paths. When a turn ends, it hands a
 job to its worker thread. Events from a harness without a transcript reader are
 ignored.
 
-A profile holds a harness's hook registration, the payload path of the
-session's working directory, and the files hashed into `config_version`. The
-session sender reads native hook events directly; a harness that omits an
-event loses only what that event gives.
+A profile holds a harness's hook registration and the files hashed into
+`config_version`. The hook and the session sender read native hook events and
+payload keys directly; a harness that omits an event loses only what that
+event gives.
 
 ## State and lifecycle
 

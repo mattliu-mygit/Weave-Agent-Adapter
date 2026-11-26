@@ -1,14 +1,14 @@
-"""Load a harness profile (TOML): how to install its hooks, where a hook payload
-holds the session's working directory, and which files make up config_version.
+"""Load a harness profile (TOML): how to install its hooks and which files make up
+config_version.
 
-Hook events and transcripts are read by code, in the session sender and the
-transcript readers, not through the profile. Field paths are dotted (e.g. "a.b").
+Hook payloads and transcripts are read by code, in the hook, the session sender,
+and the transcript readers, not through the profile.
 """
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Optional
 
 try:
     import tomllib as _toml            # py 3.11+
@@ -22,40 +22,20 @@ except ModuleNotFoundError:            # py < 3.11
 DEFAULT_PROFILES_DIR = os.path.join(os.path.dirname(__file__), "profiles")
 
 
-def _dig(obj: Any, dotted: str) -> Any:
-    cur = obj
-    for part in dotted.split("."):
-        if isinstance(cur, dict) and part in cur:
-            cur = cur[part]
-        else:
-            return None
-    return cur
-
-
 @dataclass
 class Profile:
     name: str
-    fields: dict          # [fields]: field -> dotted path in a hook payload; the hook reads `cwd`
     registration: dict
     config_surface: dict = None   # [config_surface]: artifact paths hashed into config_version
 
     def __post_init__(self):
         self.config_surface = self.config_surface or {}
 
-    def extract(self, payload: dict) -> dict:
-        out = {}
-        for name, path in self.fields.items():
-            val = _dig(payload, path) if path else None
-            if val is not None:
-                out[name] = val
-        return out
-
     @classmethod
     def from_dict(cls, d: dict) -> "Profile":
         h = d.get("harness", {})
         return cls(
             name=h.get("name", "unknown"),
-            fields=dict(d.get("fields", {})),
             registration=dict(d.get("registration", {})),
             config_surface=dict(d.get("config_surface", {})),
         )

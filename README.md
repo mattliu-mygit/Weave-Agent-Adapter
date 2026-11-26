@@ -266,7 +266,6 @@ profile. Copy a profile from
 [`weave_agent_adapter/profiles/`](weave_agent_adapter/profiles/), then declare:
 
 - user and local settings paths plus the events to register;
-- the payload path of the session's working directory;
 - optionally, the instruction files hashed into `config_version`, and paths under
   them to leave out.
 

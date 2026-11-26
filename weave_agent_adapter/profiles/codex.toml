@@ -8,9 +8,6 @@
 [harness]
 name    = "codex"
 
-[fields]
-cwd = "cwd"                  # the session's working directory, for trace_role
-
 [config_surface]
 # Deliberately-edited context artifacts that shape agent behavior, hashed into
 # weave_agent_adapter.config_version — the A/B cohort key for evaluating

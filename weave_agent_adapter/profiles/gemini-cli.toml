@@ -5,9 +5,6 @@
 [harness]
 name = "gemini-cli"
 
-[fields]
-cwd = "cwd"                  # the session's working directory, for trace_role
-
 [registration]
 user_path  = "~/.gemini/settings.json"
 local_path = ".gemini/settings.json"

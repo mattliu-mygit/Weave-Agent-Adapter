@@ -23,7 +23,6 @@ from datetime import datetime, timezone
 
 from . import transport
 from .diagnostics import diagnose, open_diagnostic_stream
-from .profile import load_profile
 from .trace_role import resolve_trace_role
 
 
@@ -75,13 +74,6 @@ def _hook_result(args) -> int:
     if getattr(args, "success_json", False):
         print("{}")
     return 0
-
-
-def _event_cwd(harness: str, payload: dict):
-    try:
-        return load_profile(harness).extract(payload).get("cwd")
-    except Exception:
-        return None
 
 
 def _sidecar_up() -> bool:
@@ -138,9 +130,7 @@ def cmd_hook(args) -> int:
         event = {
             "v": 1, "harness": args.harness, "event": args.event,
             "captured_at": captured_at, "payload": payload,
-            "trace_role": resolve_trace_role(
-                _event_cwd(args.harness, payload)
-            ),
+            "trace_role": resolve_trace_role(payload.get("cwd")),
         }
         if not transport.send(event) and not (_ensure_sidecar() and transport.send(event)):
             # The sidecar can't take the event now, so it reads it from the spool when it runs.

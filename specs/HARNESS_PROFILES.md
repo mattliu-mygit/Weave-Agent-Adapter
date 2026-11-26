@@ -2,12 +2,12 @@
 
 ## Purpose
 
-A profile tells the adapter three things about one command-hook harness: how to
-register its hooks, where a hook payload holds the session's working directory,
-and which files make up its `config_version`. Hook events and transcripts are
-read by code, the session sender and one transcript reader per harness, not
-through the profile. So a harness's hooks need only a TOML profile, while
-recording its sessions also needs a transcript reader.
+A profile tells the adapter two things about one command-hook harness: how to
+register its hooks and which files make up its `config_version`. Hook events
+and transcripts are read by code, the hook, the session sender, and one
+transcript reader per harness, not through the profile. So a harness's hooks
+need only a TOML profile, while recording its sessions also needs a transcript
+reader.
 
 The supported harness contract is intentionally narrow: the harness runs a
 command for lifecycle events and passes one JSON object on standard input.
@@ -19,9 +19,6 @@ Other delivery mechanisms are outside the current product.
 [harness]
 name = "my-harness"
 
-[fields]
-cwd = "cwd"
-
 [config_surface]
 paths   = ["~/.my-harness/AGENTS.md", "~/.my-harness/skills", "{cwd}/AGENTS.md"]
 exclude = ["~/.my-harness/skills/.system"]
@@ -32,10 +29,6 @@ local_path = ".my-harness/hooks.json"
 command    = "weave-agent-adapter hook --harness my-harness"
 events     = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"]
 ```
-
-`[fields]` holds `cwd`, a dotted path to the session's working directory in a
-hook payload. The hook uses it to find the workspace's `trace_role` file; without
-it, `trace_role` comes from the environment or the default.
 
 `[config_surface]` is optional; without it `config_version` is null.
 
@@ -59,12 +52,14 @@ Leave out anything that changes without an edit by the user, such as
 auto-memory or a settings file that records trust and auth, or every session
 gets a new version.
 
-## Hook events the session sender reads
+## Hook events the adapter reads
 
-The session sender reads native event names and payload keys directly:
+The hook and the session sender read native event names and payload keys
+directly:
 
 - every event may carry `session_id`, `cwd`, `transcript_path`, and
-  `permission_mode`;
+  `permission_mode`. The hook finds the workspace's `trace_role` file from
+  `cwd`; without it, it starts from its own working directory;
 - `PermissionRequest` and the `PostToolUse` of the same `tool_use_id` give the
   call's `permission_decision`, `approved` or `not_approved`;
 - `Stop` ends a turn. Codex's names it with `turn_id`. Claude Code's ends the
@@ -105,7 +100,7 @@ prints the note without adding harness-specific installer behavior.
    the events the harness actually emits.
 4. To send its sessions to CES, add a transcript reader, register it in the
    session sender, and add tests that drive a session through it. Events whose
-   names or keys differ from the ones above need session-sender changes too.
+   names or keys differ from the ones above need hook or session-sender changes.
 5. Document genuine degradation where the harness lacks an event.
 
 Raw payload capture is not a shipped runtime feature because it conflicts with
