@@ -315,3 +315,39 @@ def test_replay_rebuilds_a_session_whose_turns_failed_to_build(env, tmp_path):
     assert [h["Idempotency-Key"] for _, h, _ in writes] == [
         "session-v1:codex:T1", "session-trajectory-v1:codex:T1", "turn-v1:codex:T1:U1"]
     assert not os.path.exists(dlq.DEFAULT_PATH)
+
+
+def _replayed_decision(env, tmp_path, decisions=None, prompts=None):
+    fake, cfg, _ = env
+    config.save_evaluations_state({"project": "wandb/matt-test", "name": "agent-sessions",
+                                   "scope_ref": "UHJvamVjdDox", "dataset_id": "ds-1"})
+    transcript = ct.write(tmp_path / "t.jsonl", ct.exec_turn())
+    ctx = dataclasses.asdict(TurnContext("codex", "T1", "default", "agent_session", "1.2.3", None))
+    rebuild = {"transcript": transcript, "agents": [], "ctx": ctx, "final": True}
+    if decisions is not None:
+        rebuild["decisions"] = decisions
+    if prompts is not None:
+        ces_writer.CesWriter(None, "S", "D").remember_permission_prompts("codex", "T1", prompts)
+    dlq.append(dlq.DEFAULT_PATH, [dlq.rebuild_record(rebuild, "ValueError")])
+    _issue_ids(fake)
+
+    assert cli.main(["evaluations", "replay", "--config", cfg]) == 0
+
+    [turn] = [body for _, h, body in fake.requests if h.get("Idempotency-Key") == "turn-v1:codex:T1:U1"]
+    [tool] = [c for c in turn["cases"] if c["input"]["kind"] == "tool_call"]   # its operations include exec-1
+    return tool["output"]["permission_decision"]
+
+
+def test_replay_rebuilds_turns_with_the_permission_decisions_hooks_reported(env, tmp_path):
+    # SessionEnd removes the prompts file, so a final job's rebuild entry carries the decisions itself.
+    assert _replayed_decision(env, tmp_path, decisions={"exec-1": "approved"}) == "approved"
+
+
+def test_replay_takes_the_permission_prompts_file_over_the_entry(env, tmp_path):
+    # The prompts file is newer: the call was approved and ran after the entry was dead-lettered.
+    assert _replayed_decision(env, tmp_path, decisions={"exec-1": "not_approved"},
+                              prompts={"exec-1": True}) == "approved"
+
+
+def test_replay_without_recorded_decisions_leaves_them_null(env, tmp_path):
+    assert _replayed_decision(env, tmp_path) is None

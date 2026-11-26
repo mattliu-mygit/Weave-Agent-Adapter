@@ -33,7 +33,8 @@ def record(job: dict, key: str, status, error_code, attempts: int) -> dict:
 
 def rebuild_record(rebuild: dict, error_code: str) -> dict:
     """A session whose turns failed to build. `rebuild` holds the transcript path, the subagent
-    transcripts known so far, the turn context, and whether the session had ended."""
+    transcripts known so far, the turn context, whether the session had ended, and the
+    permission decisions hooks reported."""
     return {"v": VERSION, "failed_at": time.time(), "key": f"rebuild:{rebuild['ctx']['harness']}:"
             f"{rebuild['ctx']['session_id']}", "rebuild": rebuild, "status": None,
             "error_code": error_code, "attempts": 1}

@@ -161,8 +161,10 @@ class SessionSender:
                 if job is None:             # the shutdown sentinel
                     continue
                 entry = rebuilds.setdefault(job.ctx.session_id, {
-                    "transcript": job.transcript, "agents": [], "ctx": asdict(job.ctx), "final": False})
+                    "transcript": job.transcript, "agents": [], "ctx": asdict(job.ctx), "final": False,
+                    "decisions": {}})
                 entry["agents"] = list(dict.fromkeys([*entry["agents"], *job.agents]))
+                entry["decisions"] = {**entry["decisions"], **job.decisions}
                 entry["final"] = entry["final"] or job.final
                 with self._lock:
                     self._pending -= 1
@@ -185,7 +187,7 @@ class SessionSender:
             s.config_known = True
         ctx = TurnContext(s.harness, sid, s.permission_mode, s.trace_role, self.adapter_version,
                           s.config_version)
-        decisions = {k: "approved" if ran else "not_approved" for k, ran in s.prompts.items()}
+        decisions = permission_decisions(s.prompts)
         agents = list(dict.fromkeys([*self.writer.agent_paths(s.harness, sid), *s.agents]))
         job = _Job(s.transcript, turn_id, agents, ctx, decisions, sweep, final)
         coalesce = sweep and not final
@@ -228,7 +230,7 @@ class SessionSender:
                 # The transcript still holds the turns, so `evaluations replay` can build them again.
                 dlq.append(self.dlq_path, [dlq.rebuild_record(
                     {"transcript": job.transcript, "agents": list(job.agents), "ctx": asdict(job.ctx),
-                     "final": job.final}, type(error).__name__)])
+                     "final": job.final, "decisions": job.decisions}, type(error).__name__)])
         finally:
             with self._lock:
                 self._pending -= 1
@@ -338,6 +340,11 @@ class SessionSender:
                 self._inflight = None
 
 
+def permission_decisions(prompts: dict) -> dict:
+    """tool_use_id -> `approved` or `not_approved`, from whether each prompted call ran."""
+    return {k: "approved" if ran else "not_approved" for k, ran in prompts.items()}
+
+
 def _turn_open(t, job: _Job, reader):
     """Whether a Stop job's turn is still unended, or None while the transcript lacks it.
 
@@ -382,12 +389,14 @@ def agent_turns(reader, t, paths, decisions, ctx, redactor, sent=frozenset(), fi
     return [(key, turn) for _, _, key, turn in found]
 
 
-def transcript_jobs(reader, t, ctx: TurnContext, redactor, agents=(), final=True) -> list:
+def transcript_jobs(reader, t, ctx: TurnContext, redactor, agents=(), final=True, decisions=None) -> list:
     """Every turn of a loaded transcript as (key, job), oldest first.
 
     For a session that is over (`final`), every turn is final, as at `SessionEnd`;
     otherwise an unended last turn may still be running and is left out. Subagent turns,
-    from the transcript's own subagent files and `agents`, ride on the last turn's job."""
+    from the transcript's own subagent files and `agents`, ride on the last turn's job.
+    `decisions` holds the permission decisions hooks reported, as in a live turn job."""
+    decisions = decisions or {}
     ends = reader.turn_ends(t)
     if ends and ends[-1][1] is None and not final:
         ends = ends[:-1]
@@ -397,9 +406,10 @@ def transcript_jobs(reader, t, ctx: TurnContext, redactor, agents=(), final=True
     session_case = reader.session_case(t, reader.select_turn(t, turn_ids[0]), ctx, redactor)
     jobs = []
     for number, turn_id in enumerate(turn_ids):
-        turns = [reader.turn_records(t, reader.select_turn(t, turn_id), {}, ctx, redactor)]
+        turns = [reader.turn_records(t, reader.select_turn(t, turn_id), decisions, ctx, redactor)]
         if number == len(turn_ids) - 1:
-            turns += [turn for _, turn in agent_turns(reader, t, list(agents), {}, ctx, redactor, final=final)]
+            turns += [turn for _, turn in agent_turns(reader, t, list(agents), decisions, ctx, redactor,
+                                                      final=final)]
         body = {"harness": ctx.harness, "session_id": ctx.session_id, "session_case": session_case,
                 "turns": turns, "launch_sites": _sites_for(turns, reader.launch_sites(t))}
         jobs.append((f"turn-v1:{ctx.harness}:{ctx.session_id}:{turn_id}", body))

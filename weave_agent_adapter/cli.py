@@ -297,7 +297,7 @@ def _replay_entry(writer, entry: dict, redactor) -> None:
     """Resend one dead-letter entry. A replayed job has no later job to retry a waiting
     subagent, so its write is final and such a subagent keeps the entry dead-lettered."""
     from . import records
-    from .session_sender import READERS, transcript_jobs
+    from .session_sender import READERS, permission_decisions, transcript_jobs
 
     rebuild = entry.get("rebuild")
     if rebuild is None:
@@ -306,8 +306,12 @@ def _replay_entry(writer, entry: dict, redactor) -> None:
     ctx = records.TurnContext(**rebuild["ctx"])
     reader = READERS[ctx.harness]
     written = writer.written_turns(ctx.harness, ctx.session_id)
+    # The entry holds the decisions its job had. The prompts file, while the session hasn't
+    # ended, can hold newer ones, such as an approval that came after the entry was written.
+    decisions = {**rebuild.get("decisions", {}),
+                 **permission_decisions(writer.permission_prompts(ctx.harness, ctx.session_id))}
     jobs = transcript_jobs(reader, reader.load(rebuild["transcript"]), ctx, redactor,
-                           agents=rebuild["agents"], final=rebuild["final"])
+                           agents=rebuild["agents"], final=rebuild["final"], decisions=decisions)
     for _, job in jobs:
         turns = [turn for turn in job["turns"] if turn["turn_id"] not in written]
         if turns:

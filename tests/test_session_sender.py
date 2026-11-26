@@ -373,6 +373,7 @@ def test_a_turn_that_fails_to_build_leaves_a_rebuild_entry(tmp_path):
     missing = str(tmp_path / "gone.jsonl")
     sender = _sender(tmp_path, _Writer())
 
+    sender.handle(_event("PermissionRequest", 0.5, session_id="T1", transcript_path=missing, tool_use_id="exec-1"))
     sender.handle(_event("Stop", 1.0, session_id="T1", transcript_path=missing, turn_id="U1"))
     _finish(sender)
 
@@ -380,6 +381,7 @@ def test_a_turn_that_fails_to_build_leaves_a_rebuild_entry(tmp_path):
     entry = json.loads(line)
     assert (entry["key"], entry["error_code"]) == ("rebuild:codex:T1", "FileNotFoundError")
     assert (entry["rebuild"]["transcript"], entry["rebuild"]["final"]) == (missing, False)
+    assert entry["rebuild"]["decisions"] == {"exec-1": "not_approved"}
 
 
 class _BlockingWriter(_Writer):
@@ -432,6 +434,8 @@ def test_closing_with_queued_jobs_leaves_one_rebuild_entry_per_session(tmp_path)
     _wait_until_writing(sender)
     sender.handle(_event("SubagentStop", 3.0, session_id="T3", agent_id="C1", agent_transcript_path=child,
                          turn_id="K1"))
+    for event in ("PermissionRequest", "PostToolUse"):
+        sender.handle(_event(event, 3.5, session_id="T3", tool_use_id="exec-9"))
     sender.handle(_event("SessionEnd", 4.0, session_id="T3"))
     threading.Timer(0.3, writer.release.set).start()
     sender.close(timeout=0.1)
@@ -440,6 +444,7 @@ def test_closing_with_queued_jobs_leaves_one_rebuild_entry_per_session(tmp_path)
     assert [e["key"] for e in entries if "job" in e] == ["turn-v1:codex:T3:P1"]   # the write in flight
     [rebuild] = [e["rebuild"] for e in entries if "rebuild" in e]
     assert (rebuild["transcript"], rebuild["agents"], rebuild["final"]) == (parent, [child], True)
+    assert rebuild["decisions"] == {"exec-9": "approved"}     # SessionEnd removed the prompts file
 
 
 def test_a_resumed_session_keeps_the_subagent_transcripts_named_before(tmp_path):

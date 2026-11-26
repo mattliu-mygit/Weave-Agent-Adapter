@@ -191,9 +191,9 @@ thread reads the transcript, redacts values, builds the turn's Cases, and writes
 them to CES. A turn that still fails after retries is kept whole in the
 dead-letter file; `weave-agent-adapter evaluations replay` resends it. If a
 session's turns fail to build from its transcript, the file records the
-transcript instead, and replay builds the turns again from it. The
-sidecar exits when idle and restarts on demand. Local diagnostics contain
-metadata only, never payload values or exception messages.
+transcript and the permission decisions instead, and replay builds the turns
+again from them. The sidecar exits when idle and restarts on demand. Local
+diagnostics contain metadata only, never payload values or exception messages.
 
 ## Configuration
 
